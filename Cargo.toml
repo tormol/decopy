@@ -13,4 +13,5 @@ name = "copy-scan"
 path = "find_copies.rs"
 
 [dependencies]
+clap = {version="4.1.1", features=["derive"]}
 sha2 = {version="0.10.6", features=["asm"]}

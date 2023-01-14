@@ -12,16 +12,23 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
-extern crate sha2;
-
-use std::{env, fs, io::Read, path::PathBuf, process::exit, thread};
+use std::{fs, io::Read, num::NonZeroU16, path::PathBuf, process::exit, thread};
 use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+extern crate clap;
+use clap::Parser;
+
+extern crate sha2;
 use sha2::{Sha256, Digest};
 
-fn usage(name: &str) -> ! {
-    eprintln!("Usage: {} <how many threads to use for hashing> <directory>...", name);
-    exit(1);
+#[derive(Parser, Debug)]
+#[command(arg_required_else_help=true, author, version, about, long_about=None)]
+struct Args {
+    #[arg(short='t', long, value_name="NUBMER_OF_HASHER_THREADS", default_value_t=NonZeroU16::new(4).unwrap())]
+    hasher_threads: NonZeroU16,
+    #[arg(required = true)]
+    roots: Vec<PathBuf>,
 }
 
 #[derive(Default, Debug)]
@@ -58,21 +65,11 @@ fn hash_file(file_path: PathBuf,  buf: &mut[u8],  hasher: &mut Sha256) {
 }
 
 fn main() {
-    let mut args = env::args_os();
-    let name = match args.next() {
-        Some(name) => name.to_string_lossy().into_owned(),
-        None => String::new(),
-    };
-    let hasher_threads = args.next().unwrap_or_else(|| usage(&name) )
-        .to_str().unwrap_or_else(|| usage(&name) )
-        .parse::<u32>().unwrap_or_else(|_| usage(&name) );
-    if args.len() == 0 {
-        usage(&name)
-    }
+    let args = Args::parse();
 
     let pool = Arc::new(FilePool::default());
-    let mut threads = Vec::with_capacity(hasher_threads as usize);
-    for n in (1..=hasher_threads).into_iter() {
+    let mut threads = Vec::with_capacity(u16::from(args.hasher_threads).into());
+    for n in (1..=args.hasher_threads.into()).into_iter() {
         let pool = pool.clone();
         let builder = thread::Builder::new().name(format!("hasher_{}", n));
         let thread = builder.spawn(move || {
@@ -97,26 +94,26 @@ fn main() {
         threads.push(thread);
     }
 
-    for dir in args {
+    for dir in args.roots {
         let dir_path = PathBuf::from(dir);
         let dir_path = fs::canonicalize(&dir_path).unwrap_or_else(|e| {
             eprintln!("Cannot canoniicalize {}: {}", dir_path.display(), e);
-            exit(2);
+            exit(1);
         });
         let entries = fs::read_dir(&dir_path).unwrap_or_else(|e| {
             eprintln!("Cannot open {}: {}", dir_path.display(), e);
-            exit(2);
+            exit(1);
         });
         for entry in entries {
             let entry = entry.unwrap_or_else(|e| {
                 eprintln!("Error getting entry from {}: {}", dir_path.display(), e);
-                exit(2);
+                exit(1);
             });
             let mut entry_path = dir_path.clone();
             entry_path.push(entry.path());
             let file_type = entry.file_type().unwrap_or_else(|e| {
                 eprintln!("Error getting type of {}: {}", entry_path.display(), e);
-                exit(2);
+                exit(1);
             });
             if !file_type.is_file() {
                 let file_type = match file_type {
