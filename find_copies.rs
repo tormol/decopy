@@ -14,7 +14,6 @@
 
 use std::{fs, io::Read, num::NonZeroU16, path::PathBuf, process::exit, thread};
 use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 extern crate clap;
 use clap::Parser;
@@ -32,9 +31,14 @@ struct Args {
 }
 
 #[derive(Default, Debug)]
+struct FilePoolData {
+    stop: bool,
+    to_process: Vec<PathBuf>,
+}
+
+#[derive(Default, Debug)]
 struct FilePool {
-    stop: AtomicBool,
-    to_process: Mutex<Vec<PathBuf>>,
+    data: Mutex<FilePoolData>,
     waker: Condvar,
 }
 
@@ -76,17 +80,17 @@ fn main() {
             let mut buf = [0u8; 64*1024];
             let mut hasher = Sha256::new();
             'relock: loop {
-                let mut lock = pool.to_process.lock().unwrap();
+                let mut lock = pool.data.lock().unwrap();
                 'reuse: loop {
-                    if let Some(file) = lock.pop() {
+                    if let Some(file) = lock.to_process.pop() {
                         drop(lock);
                         println!("thread {} reading {}", n, file.display());
                         hash_file(file, &mut buf, &mut hasher);
                         break 'reuse;
-                    } else if pool.stop.load(Ordering::Relaxed) {
+                    } else if lock.stop {
                         break 'relock;
                     } else {
-                        lock = pool.waker.wait_while(lock, |lock| lock.is_empty() ).unwrap();
+                        lock = pool.waker.wait_while(lock, |lock| lock.to_process.is_empty() ).unwrap();
                     }
                 }
             }
@@ -125,15 +129,15 @@ fn main() {
                 continue;
             }
             println!("found file {}", entry_path.display());
-            let mut lock = pool.to_process.lock().unwrap();
-            lock.push(entry_path);
+            let mut lock = pool.data.lock().unwrap();
+            lock.to_process.push(entry_path);
             drop(lock);
             pool.waker.notify_one();
         }
     }
 
-    let lock = pool.to_process.lock().unwrap();
-    pool.stop.store(true, Ordering::Relaxed);
+    let mut lock = pool.data.lock().unwrap();
+    lock.stop = true;
     drop(lock);
     for thread in threads {
         thread.join().unwrap();
