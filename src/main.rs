@@ -22,7 +22,8 @@ extern crate thread_priority;
 mod available_buffers;
 use available_buffers::*;
 
-use std::{fs, io::Read, process::exit, thread, time::Duration};
+use std::{fs, process::exit, thread, time::Duration};
+use std::io::{self, Read};
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
@@ -50,13 +51,6 @@ struct Args {
     roots: Vec<PathBuf>,
 }
 
-/// A vector that is always fully initialized.
-#[derive(Default, Debug)]
-struct UsedBuffer {
-    buffer: Box<[u8]>,
-    length: usize,
-}
-
 #[derive(Clone, Copy, Debug)]
 enum ReadType {File, Directory}
 
@@ -73,8 +67,15 @@ impl Default for ReadQueue {
 }
 
 #[derive(Debug)]
+enum FilePart {
+    /// A vector that is always fully initialized.
+    Chunk{buffer: Box<[u8]>,  length: usize},
+    Error(io::Error),
+}
+
+#[derive(Debug)]
 struct HashQueue {
-    queue: Vec<(PathBuf, mpsc::Receiver<UsedBuffer>)>,
+    queue: Vec<(PathBuf, mpsc::Receiver<FilePart>)>,
     stop_now: bool,
     stop_when_empty: bool,
 }
@@ -134,36 +135,27 @@ fn read_file(file_path: &Path,  thread_name: &str,  pool: &Pools) {
         }
     };
 
-    let mut buf = pool.buffers.get_buffer(pool.buffers.max_single_buffer_size(), thread_name);
+    let mut buffer = pool.buffers.get_buffer(pool.buffers.max_single_buffer_size(), thread_name);
     let (tx, rx) = mpsc::channel();
+    // delay inserting until after first read
     let mut insert_rx = Some(rx);
-    let mut pos = 0;
     let mut incomplete = true;
 
     while incomplete {
-        match file.read(&mut buf) {
+        match file.read(&mut buffer) {
             Err(e) => {
-                println!("{} reading failed after {} bytes: {}", file_path.display(), pos, e);
-                let empty = UsedBuffer {
-                    buffer: Box::default(),
-                    length: 0,
-                };
-                tx.send(empty).unwrap();
+                tx.send(FilePart::Error(e)).unwrap();
                 incomplete = false;
             }
             Ok(0) => {
                 incomplete = false;
             }
-            Ok(n) => {
-                let read = UsedBuffer {
-                    buffer: buf,
-                    length: n,
-                };
-                buf = Box::default();
-                pos += n;
-                tx.send(read).unwrap();
+            Ok(length) => {
+                tx.send(FilePart::Chunk{buffer, length}).unwrap();
+                buffer = pool.buffers.get_buffer(pool.buffers.max_single_buffer_size(), thread_name);
             }
         }
+        // now insert it
         if let Some(rx) = insert_rx.take() {
             let mut lock = pool.to_hash.lock().unwrap();
             lock.queue.push((file_path.to_owned(), rx));
@@ -171,7 +163,7 @@ fn read_file(file_path: &Path,  thread_name: &str,  pool: &Pools) {
             pool.hasher_waker.notify_one();
         }
     }
-    pool.buffers.return_buffer(buf);
+    pool.buffers.return_buffer(buffer);
 }
 
 fn read_files(pool: Arc<Pools>, thread_name: String) {
@@ -203,35 +195,36 @@ fn read_files(pool: Arc<Pools>, thread_name: String) {
 }
 
 fn hash_file(
-        file_path: PathBuf,  chunks: mpsc::Receiver<UsedBuffer>,
+        file_path: PathBuf,  parts: mpsc::Receiver<FilePart>,
         hasher: &mut sha2::Sha256,  thread_name: &str,
-        buffers: &AvailableBuffers) {
-    let buf = match chunks.try_recv() {
-        Ok(buf) => buf,
-        Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
-            println!("{} is empty", file_path.display());
-            return;
-        },
-    };
+        buffers: &AvailableBuffers,
+) {
+    let mut position = 0;
 
-    println!("{} hashing {}", thread_name, file_path.display());
-    hasher.update(&buf.buffer[..buf.length]);
-    let mut size = buf.length;
-    buffers.return_buffer(buf.buffer);
-
-    for buf in chunks.into_iter() {
-        if buf.length == 0 {
-            // IO error
-            hasher.reset();
-            return;
+    for part in parts.into_iter() {
+        match part {
+            FilePart::Chunk{buffer, length} => {
+                if position == 0 {
+                    println!("{} hashing {}", thread_name, file_path.display());
+                }
+                hasher.update(&buffer[..length]);
+                position += length;
+                buffers.return_buffer(buffer);
+            },
+            FilePart::Error(e) => {
+                println!("{} got IO error after {} bytes: {}", file_path.display(), position, e);
+                hasher.reset();
+                return;
+            },
         }
-        hasher.update(&buf.buffer[..buf.length]);
-        size += buf.length;
-        buffers.return_buffer(buf.buffer);
     }
 
-    let hash_result = hasher.finalize_reset();
-    println!("{} {} bytes {:#x}", file_path.display(), size, hash_result);
+    if position == 0 {
+        println!("{} is empty", file_path.display());
+    } else {
+        let hash_result = hasher.finalize_reset();
+        println!("{} {} bytes {:#x}", file_path.display(), position, hash_result);
+    }
 }
 
 fn hash_files(pool: Arc<Pools>,  thread_name: String) {
