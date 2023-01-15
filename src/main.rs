@@ -166,13 +166,9 @@ fn hash_files(pool: Arc<FilePool>, hasher_thread_number: u16) {
             if let Some((path, rx)) = lock.to_hash.pop() {
                 let buf = match rx.try_recv() {
                     Ok(buf) => buf,
-                    Err(mpsc::TryRecvError::Empty) => {
+                    Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
                         println!("{} is empty", path.display());
                         continue 'reuse;
-                    },
-                    Err(e) => {
-                        drop(lock);
-                        panic!("first recv unexpectedly failed: {}", e);
                     },
                 };
                 drop(lock);
