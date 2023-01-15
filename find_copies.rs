@@ -20,8 +20,16 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 extern crate clap;
 use clap::Parser;
 
+#[cfg(target_os="linux")]
+extern crate ioprio;
+
 extern crate sha2;
 use sha2::{Sha256, Digest};
+
+extern crate thread_priority;
+use thread_priority::{ThreadBuilder, ThreadPriority};
+#[cfg(unix)]
+use thread_priority::unix::{NormalThreadSchedulePolicy, ThreadSchedulePolicy};
 
 #[derive(Parser, Debug)]
 #[command(arg_required_else_help=true, author, version, about, long_about=None)]
@@ -203,16 +211,36 @@ fn hash_files(pool: Arc<FilePool>, hasher_thread_number: u16) {
 
 fn main() {
     let args = Args::parse();
-
     let mut pool = FilePool::default();
     pool.max_buffer_size = usize::from(args.max_buffer_size) * 1024;
     let pool = Arc::new(pool);
 
+    // Keep my desktop responsive
+    #[cfg(target_os="linux")]
+    {
+        let this = ioprio::Target::Process(ioprio::Pid::this());
+        let priority = ioprio::Class::BestEffort(ioprio::BePriorityLevel::lowest());
+        if let Err(e) = ioprio::set_priority(this, ioprio::Priority::new(priority)) {
+            eprintln!("Failed to set IO priority to {:?}: {}", priority, e);
+        }
+    }
+
     let mut hasher_threads = Vec::with_capacity(u16::from(args.hasher_threads).into());
     for n in (1..=args.hasher_threads.into()).into_iter() {
         let pool = pool.clone();
-        let builder = thread::Builder::new().name(format!("hasher_{}", n));
-        let thread = builder.spawn(move || hash_files(pool, n) ).unwrap();
+        let builder = ThreadBuilder::default()
+            .name(format!("hasher_{}", n))
+            .priority(ThreadPriority::Min);
+        #[cfg(unix)]
+        let builder = builder.policy(
+                ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Batch)
+        );
+        let thread = builder.spawn(move |priority_result| {
+            if let Err(e) = priority_result {
+                eprintln!("Failed lowering thread priority: {:?}", e);
+            }
+            hash_files(pool, n)
+        }).unwrap();
         hasher_threads.push(thread);
     }
 
