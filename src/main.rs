@@ -111,92 +111,90 @@ fn read_files(pool: Arc<FilePool>, thread_name: String) {
         NextFile,
     }
     let mut state = State::NextFile;
+    let mut lock = pool.data.lock().unwrap();
 
-    'relock: loop {
-        let mut lock = pool.data.lock().unwrap();
-
-        'reuse: loop {
-            if let State::IncompleteFile{ path, file, pos, tx} = &mut state {
-                drop(lock);
-                if read_file_part(
-                        &path, file, pos, tx,
-                        &thread_name, &pool.buffers,
-                    ) {
-                    state = State::NextFile;
-                }
-                continue 'relock;
-            } else if let Some(path) = lock.to_read.pop() {
-                drop(lock);
-                println!("{} reading {}", thread_name, path.display());
-                let mut file = fs::File::open(&path).unwrap_or_else(|e| {
-                    eprintln!("Cannot open  {}: {}", path.display(), e);
-                    exit(2);
-                });
-                let (mut tx, rx) = mpsc::channel();
-                let mut pos = 0;
-
-                if !read_file_part(
-                        &path, &mut file, &mut pos, &mut tx,
-                        &thread_name, &pool.buffers,
-                    ) {
-                    state = State::IncompleteFile{ path: path.clone(), file, pos, tx };
-                }
-                lock = pool.data.lock().unwrap();
-                lock.to_hash.push((path, rx));
-                // there's some hurry up and wait here,
-                // but I'll have more hasher threads than IO threads,
-                // so this thread not having to immediately relock is more important.
-                pool.wake_hasher.notify_one();
-                continue 'reuse;
-            } else if lock.stop {
-                break 'relock;
-            } else {
-                lock = pool.wake_reader.wait(lock).unwrap();
+    loop {
+        if let State::IncompleteFile{ path, file, pos, tx} = &mut state {
+            drop(lock);
+            if read_file_part(
+                    &path, file, pos, tx,
+                    &thread_name, &pool.buffers,
+                ) {
+                state = State::NextFile;
             }
+            lock = pool.data.lock().unwrap();
+            continue;
+        } else if let Some(path) = lock.to_read.pop() {
+            drop(lock);
+            println!("{} reading {}", thread_name, path.display());
+            let mut file = fs::File::open(&path).unwrap_or_else(|e| {
+                eprintln!("Cannot open  {}: {}", path.display(), e);
+                exit(2);
+            });
+            let (mut tx, rx) = mpsc::channel();
+            let mut pos = 0;
+
+            if !read_file_part(
+                    &path, &mut file, &mut pos, &mut tx,
+                    &thread_name, &pool.buffers,
+                ) {
+                state = State::IncompleteFile{ path: path.clone(), file, pos, tx };
+            }
+            lock = pool.data.lock().unwrap();
+            lock.to_hash.push((path, rx));
+            // there's some hurry up and wait here,
+            // but I'll have more hasher threads than IO threads,
+            // so this thread not having to immediately relock is more important.
+            pool.wake_hasher.notify_one();
+            lock = pool.data.lock().unwrap();
+            continue;
+        } else if lock.stop {
+            break;
+        } else {
+            lock = pool.wake_reader.wait(lock).unwrap();
         }
     }
 }
 
 fn hash_files(pool: Arc<FilePool>, hasher_thread_number: u16) {
     let mut hasher = Sha256::new();
-    'relock: loop {
-        let mut lock = pool.data.lock().unwrap();
+    let mut lock = pool.data.lock().unwrap();
 
-        'reuse: loop {
-            if let Some((path, rx)) = lock.to_hash.pop() {
-                let buf = match rx.try_recv() {
-                    Ok(buf) => buf,
-                    Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
-                        println!("{} is empty", path.display());
-                        continue 'reuse;
-                    },
-                };
-                drop(lock);
+    'get_file: loop {
+        if let Some((path, rx)) = lock.to_hash.pop() {
+            let buf = match rx.try_recv() {
+                Ok(buf) => buf,
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
+                    println!("{} is empty", path.display());
+                    continue 'get_file;
+                },
+            };
+            drop(lock);
 
-                println!("hasher thread {} hashing {}", hasher_thread_number, path.display());
-                hasher.update(&buf.buffer[..buf.length]);
-                let mut size = buf.length;
-                pool.buffers.return_buffer(buf.buffer);
+            println!("hasher thread {} hashing {}", hasher_thread_number, path.display());
+            hasher.update(&buf.buffer[..buf.length]);
+            let mut size = buf.length;
+            pool.buffers.return_buffer(buf.buffer);
 
-                for buf in rx.into_iter() {
-                    if buf.length == 0 {
-                        // IO error
-                        hasher.reset();
-                        continue 'relock;
-                    }
-                    hasher.update(&buf.buffer[..buf.length]);
-                    size += buf.length;
-                    pool.buffers.return_buffer(buf.buffer);
+            for buf in rx.into_iter() {
+                if buf.length == 0 {
+                    // IO error
+                    hasher.reset();
+                    lock = pool.data.lock().unwrap();
+                    continue 'get_file;
                 }
-
-                let hash_result = hasher.finalize_reset();
-                println!("{} {} bytes {:#x}", path.display(), size, hash_result);
-                continue 'relock;
-            } else if lock.stop {
-                break 'relock;
-            } else {
-                lock = pool.wake_hasher.wait(lock).unwrap();
+                hasher.update(&buf.buffer[..buf.length]);
+                size += buf.length;
+                pool.buffers.return_buffer(buf.buffer);
             }
+
+            let hash_result = hasher.finalize_reset();
+            println!("{} {} bytes {:#x}", path.display(), size, hash_result);
+            lock = pool.data.lock().unwrap();
+        } else if lock.stop {
+            break;
+        } else {
+            lock = pool.wake_hasher.wait(lock).unwrap();
         }
     }
 }
