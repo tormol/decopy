@@ -16,12 +16,12 @@
 pub use crate::available_buffers::AvailableBuffers;
 
 use std::{io, path::Path};
+use std::fmt::{self, Debug, Formatter};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
 #[derive(Clone, Copy, Debug)]
 pub enum ReadType {File, Directory}
 
-#[derive(Debug)]
 pub struct ReadQueue {
     pub queue: Vec<(Arc<Path>, ReadType)>,
     pub stop_now: bool,
@@ -32,6 +32,15 @@ impl Default for ReadQueue {
         ReadQueue { queue: Vec::new(), stop_now: false, working: 0, }
     }
 }
+impl Debug for ReadQueue {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        fmtr.debug_struct("ReadQueue")
+            .field("queue_length", &self.queue.len())
+            .field("stop_now", &self.stop_now)
+            .field("working", &self.working)
+            .finish()
+    }
+}
 
 #[derive(Debug)]
 pub enum FilePart {
@@ -40,7 +49,6 @@ pub enum FilePart {
     Error(io::Error),
 }
 
-#[derive(Debug)]
 pub struct HashQueue {
     pub queue: Vec<(Arc<Path>, mpsc::Receiver<FilePart>)>,
     pub stop_now: bool,
@@ -49,6 +57,15 @@ pub struct HashQueue {
 impl Default for HashQueue {
     fn default() -> Self {
         HashQueue { queue: Vec::new(), stop_now: false, stop_when_empty: false, }
+    }
+}
+impl Debug for HashQueue {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        fmtr.debug_struct("HashQueue")
+            .field("queue_length", &self.queue.len())
+            .field("stop_now", &self.stop_now)
+            .field("stop_when_empty", &self.stop_when_empty)
+            .finish()
     }
 }
 
