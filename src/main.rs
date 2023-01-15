@@ -21,10 +21,11 @@ extern crate thread_priority;
 
 mod available_buffers;
 use available_buffers::*;
+mod bytes;
+use bytes::*;
 
-use std::{fs, process::exit, thread, time::Duration};
+use std::{fs, num::NonZeroU16, process::exit, thread, time::Duration};
 use std::io::{self, Read};
-use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
@@ -43,10 +44,10 @@ struct Args {
     io_threads: NonZeroU16,
     #[arg(short='t', long, value_name="NUBMER_OF_HASHER_THREADS", default_value_t=NonZeroU16::new(4).unwrap())]
     hasher_threads: NonZeroU16,
-    #[arg(short='b', long, value_name="MAX_BUFFER_SIZE_IN_KB", default_value_t=NonZeroUsize::new(1024).unwrap())]
-    max_buffer_size: NonZeroUsize,
-    #[arg(short, long, value_name="MAX_MEMORY_USAGE_OF_BUFFERS_IN_MB")]
-    max_buffers_memory: Option<NonZeroUsize>,
+    #[arg(short='b', long, default_value_t=Bytes::new(1<<20))]
+    max_buffer_size: Bytes,
+    #[arg(short, long, value_name="MAX_MEMORY_USAGE_OF_BUFFERS", default_value_t=Bytes::new(1<<30))]
+    max_buffers_memory: Bytes,
     #[arg(required = true)]
     roots: Vec<PathBuf>,
 }
@@ -256,11 +257,8 @@ fn main() {
         to_hash: Mutex::new(HashQueue::default()),
         hasher_waker: Condvar::new(),
         buffers: available_buffers::AvailableBuffers::new(
-            match args.max_buffers_memory {
-                Some(size) => usize::from(size).saturating_mul(1024*1024),
-                None => isize::MAX as usize,
-            },
-            usize::from(args.max_buffer_size).saturating_mul(1024),
+            args.max_buffers_memory.into(),
+            args.max_buffer_size.into(),
         ),
     });
 
@@ -318,8 +316,8 @@ fn main() {
 
     // wait for IO threads to finish
     loop {
-        eprintln!("buffer memory allocated: {} MiB",
-                pool.buffers.current_buffers_size()/(1024*1024),
+        eprintln!("buffer memory allocated: {:#}",
+                Bytes::new(pool.buffers.current_buffers_size()),
         );
 
         let lock = pool.to_read.lock().unwrap();
