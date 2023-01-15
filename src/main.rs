@@ -71,83 +71,64 @@ struct FilePool {
     buffers: available_buffers::AvailableBuffers,
 }
 
-fn read_file_part(
-        file_path: &Path,  file: &mut fs::File,  pos: &mut usize,
-        tx: &mut mpsc::Sender<UsedBuffer>,
-        thread_name: &str,
-        buffer_pool: &available_buffers::AvailableBuffers,
-) -> bool {
-    let mut buf = buffer_pool.get_buffer(buffer_pool.max_single_buffer_size(), thread_name);
-    match file.read(&mut buf) {
-        Err(e) => {
-            println!("{} reading failed after {} bytes: {}", file_path.display(), *pos, e);
-            let empty = UsedBuffer {
-                buffer: Box::default(),
-                length: 0,
-            };
-            tx.send(empty).unwrap();
-            buffer_pool.return_buffer(buf);
-            true
+fn read_file(
+        file_path: &Path,  mut file: fs::File,
+        thread_name: &str,  pool: &FilePool,
+) {
+    let mut buf = pool.buffers.get_buffer(pool.buffers.max_single_buffer_size(), thread_name);
+    let (tx, rx) = mpsc::channel();
+    let mut insert_rx = Some(rx);
+    let mut pos = 0;
+    let mut incomplete = true;
+
+    while incomplete {
+        match file.read(&mut buf) {
+            Err(e) => {
+                println!("{} reading failed after {} bytes: {}", file_path.display(), pos, e);
+                let empty = UsedBuffer {
+                    buffer: Box::default(),
+                    length: 0,
+                };
+                tx.send(empty).unwrap();
+                incomplete = false;
+            }
+            Ok(0) => {
+                incomplete = false;
+            }
+            Ok(n) => {
+                let read = UsedBuffer {
+                    buffer: buf,
+                    length: n,
+                };
+                buf = Box::default();
+                pos += n;
+                tx.send(read).unwrap();
+            }
         }
-        Ok(0) => {
-            buffer_pool.return_buffer(buf);
-            true
-        }
-        Ok(n) => {
-            let buf = UsedBuffer {
-                buffer: buf,
-                length: n,
-            };
-            *pos += n;
-            tx.send(buf).unwrap();
-            false
+        if let Some(rx) = insert_rx.take() {
+            let mut lock = pool.data.lock().unwrap();
+            lock.to_hash.push((file_path.to_owned(), rx));
+            drop(lock);
+            pool.wake_hasher.notify_one();
         }
     }
+    pool.buffers.return_buffer(buf);
 }
 
 fn read_files(pool: Arc<FilePool>, thread_name: String) {
-    enum State {
-        IncompleteFile{path: PathBuf,  file: fs::File,  pos: usize,  tx: mpsc::Sender<UsedBuffer>},
-        NextFile,
-    }
-    let mut state = State::NextFile;
     let mut lock = pool.data.lock().unwrap();
 
     loop {
-        if let State::IncompleteFile{ path, file, pos, tx} = &mut state {
-            drop(lock);
-            if read_file_part(
-                    &path, file, pos, tx,
-                    &thread_name, &pool.buffers,
-                ) {
-                state = State::NextFile;
-            }
-            lock = pool.data.lock().unwrap();
-            continue;
-        } else if let Some(path) = lock.to_read.pop() {
+        if let Some(path) = lock.to_read.pop() {
             drop(lock);
             println!("{} reading {}", thread_name, path.display());
-            let mut file = fs::File::open(&path).unwrap_or_else(|e| {
+            let file = fs::File::open(&path).unwrap_or_else(|e| {
                 eprintln!("Cannot open  {}: {}", path.display(), e);
                 exit(2);
             });
-            let (mut tx, rx) = mpsc::channel();
-            let mut pos = 0;
 
-            if !read_file_part(
-                    &path, &mut file, &mut pos, &mut tx,
-                    &thread_name, &pool.buffers,
-                ) {
-                state = State::IncompleteFile{ path: path.clone(), file, pos, tx };
-            }
+            read_file(&path, file, &thread_name, &pool);
             lock = pool.data.lock().unwrap();
-            lock.to_hash.push((path, rx));
-            // there's some hurry up and wait here,
-            // but I'll have more hasher threads than IO threads,
-            // so this thread not having to immediately relock is more important.
-            pool.wake_hasher.notify_one();
-            lock = pool.data.lock().unwrap();
-            continue;
         } else if lock.stop {
             break;
         } else {
