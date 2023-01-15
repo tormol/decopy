@@ -22,7 +22,7 @@ extern crate thread_priority;
 mod available_buffers;
 use available_buffers::*;
 
-use std::{fs, io::Read, process::exit, thread};
+use std::{fs, io::Read, process::exit, thread, time::Duration};
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
@@ -57,31 +57,83 @@ struct UsedBuffer {
     length: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ReadType {File, Directory}
+
 #[derive(Debug)]
-struct Queue<T> {
-    queue: Vec<T>,
+struct ReadQueue {
+    queue: Vec<(PathBuf, ReadType)>,
+    stop_now: bool,
+    working: u32,
+}
+impl Default for ReadQueue {
+    fn default() -> Self {
+        ReadQueue { queue: Vec::new(), stop_now: false, working: 0, }
+    }
+}
+
+#[derive(Debug)]
+struct HashQueue {
+    queue: Vec<(PathBuf, mpsc::Receiver<UsedBuffer>)>,
     stop_now: bool,
     stop_when_empty: bool,
 }
-impl<T> Default for Queue<T> {
+impl Default for HashQueue {
     fn default() -> Self {
-        Queue { queue: Vec::new(), stop_now: false, stop_when_empty: false }
+        HashQueue { queue: Vec::new(), stop_now: false, stop_when_empty: false, }
     }
 }
 
 #[derive(Debug)]
 struct Pools {
-    to_read: Mutex<Queue<PathBuf>>,
+    to_read: Mutex<ReadQueue>,
     reader_waker: Condvar,
-    to_hash: Mutex<Queue<(PathBuf, mpsc::Receiver<UsedBuffer>)>>,
+    to_hash: Mutex<HashQueue>,
     hasher_waker: Condvar,
     buffers: AvailableBuffers,
 }
 
-fn read_file(
-        file_path: &Path,  mut file: fs::File,
-        thread_name: &str,  pool: &Pools,
-) {
+fn read_dir(dir_path: PathBuf,  pool: &Pools) {
+    let entries = fs::read_dir(&dir_path).unwrap_or_else(|e| {
+        eprintln!("Cannot open {}: {}", dir_path.display(), e);
+        exit(1);
+    });
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| {
+            eprintln!("Error getting entry from {}: {}", dir_path.display(), e);
+            exit(1);
+        });
+        let mut entry_path = dir_path.clone();
+        entry_path.push(entry.path());
+        let file_type = entry.file_type().unwrap_or_else(|e| {
+            eprintln!("Error getting type of {}: {}", entry_path.display(), e);
+            exit(1);
+        });
+        let file_type = if file_type.is_file() {
+            ReadType::File
+        } else if file_type.is_dir() {
+            ReadType::Directory
+        } else {
+            let file_type = if file_type.is_symlink() {"symlink"} else {"special file"};
+            println!("{} is a {}, skipping.", entry_path.display(), file_type);
+            continue;
+        };
+        let mut lock = pool.to_read.lock().unwrap();
+        lock.queue.push((entry_path, file_type));
+        drop(lock);
+        pool.reader_waker.notify_one();
+    }
+}
+
+fn read_file(file_path: &Path,  thread_name: &str,  pool: &Pools) {
+    let mut file = match fs::File::open(file_path) {
+        Ok(file) => file,
+        Err(e) => {
+            eprintln!("Cannot open  {}: {}", file_path.display(), e);
+            return;
+        }
+    };
+
     let mut buf = pool.buffers.get_buffer(pool.buffers.max_single_buffer_size(), thread_name);
     let (tx, rx) = mpsc::channel();
     let mut insert_rx = Some(rx);
@@ -129,17 +181,19 @@ fn read_files(pool: Arc<Pools>, thread_name: String) {
         if lock.stop_now {
             eprintln!("{} quit due to stop signal", thread_name);
             break;
-        } else if let Some(path) = lock.queue.pop() {
+        } else if let Some((path, ty)) = lock.queue.pop() {
+            lock.working += 1;
             drop(lock);
-            println!("{} reading {}", thread_name, path.display());
-            let file = fs::File::open(&path).unwrap_or_else(|e| {
-                eprintln!("Cannot open  {}: {}", path.display(), e);
-                exit(2);
-            });
 
-            read_file(&path, file, &thread_name, &pool);
+            println!("{} reading {}", thread_name, path.display());
+            match ty {
+                ReadType::File => read_file(&path, &thread_name, &pool),
+                ReadType::Directory => read_dir(path, &pool),
+            }
+
             lock = pool.to_read.lock().unwrap();
-        } else if lock.stop_when_empty {
+            lock.working -= 1;
+        } else if lock.working == 0 {
             eprintln!("{} quit due to no more work", thread_name);
             break;
         } else {
@@ -204,9 +258,9 @@ fn hash_files(pool: Arc<Pools>,  thread_name: String) {
 fn main() {
     let args = Args::parse();
     let pool = Arc::new(Pools {
-        to_read: Mutex::new(Queue::default()),
+        to_read: Mutex::new(ReadQueue::default()),
         reader_waker: Condvar::new(),
-        to_hash: Mutex::new(Queue::default()),
+        to_hash: Mutex::new(HashQueue::default()),
         hasher_waker: Condvar::new(),
         buffers: available_buffers::AvailableBuffers::new(
             match args.max_buffers_memory {
@@ -216,6 +270,17 @@ fn main() {
             usize::from(args.max_buffer_size).saturating_mul(1024),
         ),
     });
+
+    // check root directories and add them to queue
+    let mut to_read = pool.to_read.lock().unwrap();
+    for dir_path in args.roots {
+        let dir_path = fs::canonicalize(&dir_path).unwrap_or_else(|e| {
+            eprintln!("Cannot canoniicalize {}: {}", dir_path.display(), e);
+            exit(1);
+        });
+        to_read.queue.push((dir_path, ReadType::Directory));
+    }
+    drop(to_read);
 
     // Keep my desktop responsive
     #[cfg(target_os="linux")]
@@ -227,6 +292,7 @@ fn main() {
         }
     }
 
+    // start hasher threads
     let mut hasher_threads = Vec::with_capacity(u16::from(args.hasher_threads).into());
     for n in (1..=args.hasher_threads.into()).into_iter() {
         let thread_name = format!("hasher_{}", n);
@@ -247,6 +313,7 @@ fn main() {
         hasher_threads.push(thread);
     }
 
+    // start IO threads
     let mut io_threads = Vec::with_capacity(u16::from(args.io_threads).into());
     for n in (1..=args.io_threads.into()).into_iter() {
         let thread_name = format!("io_{}", n);
@@ -256,57 +323,31 @@ fn main() {
         io_threads.push(thread);
     }
 
-    for dir in args.roots {
-        let dir_path = PathBuf::from(dir);
-        let dir_path = fs::canonicalize(&dir_path).unwrap_or_else(|e| {
-            eprintln!("Cannot canoniicalize {}: {}", dir_path.display(), e);
-            exit(1);
-        });
-        let entries = fs::read_dir(&dir_path).unwrap_or_else(|e| {
-            eprintln!("Cannot open {}: {}", dir_path.display(), e);
-            exit(1);
-        });
-        for entry in entries {
-            let entry = entry.unwrap_or_else(|e| {
-                eprintln!("Error getting entry from {}: {}", dir_path.display(), e);
-                exit(1);
-            });
-            let mut entry_path = dir_path.clone();
-            entry_path.push(entry.path());
-            let file_type = entry.file_type().unwrap_or_else(|e| {
-                eprintln!("Error getting type of {}: {}", entry_path.display(), e);
-                exit(1);
-            });
-            if !file_type.is_file() {
-                let file_type = match file_type {
-                    t if t.is_dir() => "directory",
-                    t if t.is_symlink() => "symlink",
-                    _ => "special file",
-                };
-                println!("{} is a {}, skipping.", entry_path.display(), file_type);
-                continue;
-            }
-            let mut lock = pool.to_read.lock().unwrap();
-            lock.queue.push(entry_path);
-            drop(lock);
-            pool.reader_waker.notify_one();
-        }
-    }
+    // wait for IO threads to finish
+    loop {
+        eprintln!("buffer memory allocated: {} MiB",
+                pool.buffers.current_buffers_size()/(1024*1024),
+        );
 
-    // tell IO threads they can stop now
-    let mut lock = pool.to_read.lock().unwrap();
-    lock.stop_when_empty = true;
-    drop(lock);
-    pool.reader_waker.notify_all();
-    for thread in io_threads {
-        eprintln!("joining reader");
-        thread.join().unwrap();
+        let lock = pool.to_read.lock().unwrap();
+        if (lock.queue.is_empty() && lock.working == 0) || lock.stop_now {
+            break;
+        }
+        drop(lock);
+        thread::sleep(Duration::from_millis(500));
     }
 
     // tell hashers they can stop now
     let mut lock = pool.to_hash.lock().unwrap();
     lock.stop_when_empty = true;
     drop(lock);
+
+    pool.reader_waker.notify_all();
+    for thread in io_threads {
+        eprintln!("joining reader");
+        thread.join().unwrap();
+    }
+
     pool.hasher_waker.notify_all();
     for thread in hasher_threads {
         eprintln!("joining hasher");
