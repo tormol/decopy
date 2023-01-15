@@ -251,15 +251,19 @@ fn hash_files(pool: Arc<Pools>,  thread_name: String) {
 
 fn main() {
     let args = Args::parse();
+    let buffers = AvailableBuffers::new(
+            args.max_buffers_memory.into(),
+            args.max_buffer_size.into(),
+    ).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        exit(2);
+    });
     let pool = Arc::new(Pools {
         to_read: Mutex::new(ReadQueue::default()),
         reader_waker: Condvar::new(),
         to_hash: Mutex::new(HashQueue::default()),
         hasher_waker: Condvar::new(),
-        buffers: available_buffers::AvailableBuffers::new(
-            args.max_buffers_memory.into(),
-            args.max_buffer_size.into(),
-        ),
+        buffers,
     });
 
     // check root directories and add them to queue

@@ -60,23 +60,23 @@ impl Debug for AvailableBuffers {
 
 impl AvailableBuffers {
     pub const MIN_BUFFER_SIZE: usize = 512;
-    pub fn new(max_buffers_size: usize,  max_single_buffer_size: usize) -> Self {
+    pub fn new(max_buffers_size: usize,  max_single_buffer_size: usize) -> Result<Self, &'static str> {
         if max_single_buffer_size > u32::MAX as usize {
-            panic!("max single buffer size is too big");
+            return Err("max single buffer size is too big");
         } else if max_buffers_size > isize::MAX as usize {
-            panic!("max buffers size is too big");
+            return Err("max buffers size is too big");
         } else if max_single_buffer_size < Self::MIN_BUFFER_SIZE {
-            panic!("max single buffer size is too small");
+            return Err("max single buffer size is too small");
         } else if max_buffers_size < max_single_buffer_size {
-            panic!("max buffers size is less than max single buffer size")
+            return Err("max buffers size is less than max single buffer size")
         }
-        AvailableBuffers {
+        Ok(AvailableBuffers {
             map: Mutex::new(BTreeMap::new()),
             starving: Condvar::new(),
             current_buffers_size: AtomicUsize::new(0),
             max_buffers_size: max_buffers_size.into(),
             max_single_buffer: max_single_buffer_size as u32,
-        }
+        })
     }
 
     pub fn get_buffer(&self,  requested_size: usize,  thread: &str) -> Box<[u8]> {
