@@ -15,11 +15,10 @@
 
 use crate::shared::*;
 
-use std::{fs, io::Read, process::exit};
-use std::path::{Path, PathBuf};
+use std::{fs, io::Read, path::Path, process::exit};
 use std::sync::{Arc, mpsc};
 
-fn read_dir(dir_path: PathBuf,  shared: &Shared) {
+fn read_dir(dir_path: Arc<Path>,  shared: &Shared) {
     let entries = fs::read_dir(&dir_path).unwrap_or_else(|e| {
         eprintln!("Cannot open {}: {}", dir_path.display(), e);
         exit(1);
@@ -29,8 +28,9 @@ fn read_dir(dir_path: PathBuf,  shared: &Shared) {
             eprintln!("Error getting entry from {}: {}", dir_path.display(), e);
             exit(1);
         });
-        let mut entry_path = dir_path.clone();
+        let mut entry_path = dir_path.to_path_buf();
         entry_path.push(entry.path());
+        let entry_path = Arc::<Path>::from(entry_path);
         let file_type = entry.file_type().unwrap_or_else(|e| {
             eprintln!("Error getting type of {}: {}", entry_path.display(), e);
             exit(1);
@@ -51,8 +51,8 @@ fn read_dir(dir_path: PathBuf,  shared: &Shared) {
     }
 }
 
-fn read_file(file_path: &Path,  thread_name: &str,  shared: &Shared) {
-    let mut file = match fs::File::open(file_path) {
+fn read_file(file_path: Arc<Path>,  thread_name: &str,  shared: &Shared) {
+    let mut file = match fs::File::open(&file_path) {
         Ok(file) => file,
         Err(e) => {
             eprintln!("Cannot open  {}: {}", file_path.display(), e);
@@ -63,7 +63,7 @@ fn read_file(file_path: &Path,  thread_name: &str,  shared: &Shared) {
     let mut buffer = shared.buffers.get_buffer(shared.buffers.max_single_buffer_size(), thread_name);
     let (tx, rx) = mpsc::channel();
     // delay inserting until after first read
-    let mut insert_rx = Some(rx);
+    let mut insert = Some((file_path, rx));
     let mut incomplete = true;
 
     while incomplete {
@@ -81,9 +81,9 @@ fn read_file(file_path: &Path,  thread_name: &str,  shared: &Shared) {
             }
         }
         // now insert it
-        if let Some(rx) = insert_rx.take() {
+        if let Some(insert) = insert.take() {
             let mut lock = shared.to_hash.lock().unwrap();
-            lock.queue.push((file_path.to_owned(), rx));
+            lock.queue.push(insert);
             drop(lock);
             shared.hasher_waker.notify_one();
         }
@@ -104,7 +104,7 @@ pub fn read_files(shared: Arc<Shared>, thread_name: String) {
 
             println!("{} reading {}", thread_name, path.display());
             match ty {
-                ReadType::File => read_file(&path, &thread_name, &shared),
+                ReadType::File => read_file(path, &thread_name, &shared),
                 ReadType::Directory => read_dir(path, &shared),
             }
 

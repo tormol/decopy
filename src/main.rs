@@ -29,8 +29,8 @@ use read::*;
 mod hash;
 use hash::*;
 
-use std::{fs, num::NonZeroU16, process::exit, thread, time::Duration};
-use std::path::PathBuf;
+use std::{fs, num::NonZeroU16, process::exit, sync::Arc, thread, time::Duration};
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
@@ -71,7 +71,7 @@ fn main() {
             eprintln!("Cannot canoniicalize {}: {}", dir_path.display(), e);
             exit(1);
         });
-        to_read.queue.push((dir_path, ReadType::Directory));
+        to_read.queue.push((Arc::<Path>::from(dir_path), ReadType::Directory));
     }
     drop(to_read);
 

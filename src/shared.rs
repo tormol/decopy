@@ -15,7 +15,7 @@
 
 pub use crate::available_buffers::AvailableBuffers;
 
-use std::{io, path::PathBuf};
+use std::{io, path::Path};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
 #[derive(Clone, Copy, Debug)]
@@ -23,7 +23,7 @@ pub enum ReadType {File, Directory}
 
 #[derive(Debug)]
 pub struct ReadQueue {
-    pub queue: Vec<(PathBuf, ReadType)>,
+    pub queue: Vec<(Arc<Path>, ReadType)>,
     pub stop_now: bool,
     pub working: u32,
 }
@@ -42,7 +42,7 @@ pub enum FilePart {
 
 #[derive(Debug)]
 pub struct HashQueue {
-    pub queue: Vec<(PathBuf, mpsc::Receiver<FilePart>)>,
+    pub queue: Vec<(Arc<Path>, mpsc::Receiver<FilePart>)>,
     pub stop_now: bool,
     pub stop_when_empty: bool,
 }

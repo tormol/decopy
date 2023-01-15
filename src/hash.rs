@@ -15,13 +15,13 @@
 
 use crate::shared::*;
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, mpsc};
 
 use sha2::{Sha256, Digest};
 
 fn hash_file(
-        file_path: PathBuf,  parts: mpsc::Receiver<FilePart>,
+        file_path: Arc<Path>,  parts: mpsc::Receiver<FilePart>,
         hasher: &mut sha2::Sha256,  thread_name: &str,
         buffers: &AvailableBuffers,
 ) {
