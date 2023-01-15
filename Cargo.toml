@@ -1,16 +1,11 @@
 [package]
-name = "find_copies"
+name = "deduplicator-scan"
 version = "0.1.0"
 edition = "2021"
 authors = ["Torbjørn Birch Moltu <tbm@torbmol.no>"]
 license = "GPL-3.0-or-later"
-default-run = "copy-scan"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[[bin]]
-name = "copy-scan"
-path = "find_copies.rs"
 
 [dependencies]
 clap = {version="4.1.1", features=["derive"]}
