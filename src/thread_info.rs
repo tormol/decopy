@@ -15,21 +15,26 @@
 
 use crate::bytes::Bytes;
 
+use std::{cell::UnsafeCell, mem::size_of, sync::Arc};
 use std::fmt::{self, Debug, Formatter};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(C, align(128))] // avoid false sharing
 pub struct ThreadInfo {
     thread_name: String,
     processed_bytes: AtomicUsize,
+    state: UnsafeCell<[u8; ThreadInfo::STATE_LENGTH]>,
 }
-
+unsafe impl Send for ThreadInfo {}
+unsafe impl Sync for ThreadInfo {}
 impl ThreadInfo {
+    pub const STATE_LENGTH: usize = 128-size_of::<(String,AtomicUsize)>();
+
     pub fn new(thread_name: String) -> ThreadInfo {
         ThreadInfo {
             thread_name,
             processed_bytes: AtomicUsize::new(0),
+            state: UnsafeCell::new([0; ThreadInfo::STATE_LENGTH]),
         }
     }
 
@@ -44,11 +49,27 @@ impl ThreadInfo {
         self.processed_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    pub fn get_state(&self,  out: &mut String) {
+        out.clear();
+        // this is probably UB, but I hope it works.
+        let copy = unsafe { self.state.get().read_volatile() };
+        let len = copy.iter().position(|&b| b==0 ).unwrap_or(copy.len());
+        let s = unsafe { std::str::from_utf8_unchecked(&copy[..len]) };
+        out.push_str(s);
+    }
+    pub fn set_state(&self,  state: &str) {
+        let mut to_write = [0u8; ThreadInfo::STATE_LENGTH];
+        let len = state.len().min(to_write.len());
+        to_write[..len].copy_from_slice(&state.as_bytes()[..len]);
+        unsafe { self.state.get().write_volatile(to_write) };
+    }
 }
 
 impl Debug for ThreadInfo {
     fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
-        write!(fmtr, "{}: {}", &self.thread_name, self.processed_bytes())
+        let mut string = String::new();
+        self.get_state(&mut string);
+        write!(fmtr, "{}: {} {}", &self.thread_name, self.processed_bytes(), string)
     }
 }
 

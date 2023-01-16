@@ -104,7 +104,7 @@ pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
 
     loop {
         if lock.stop_now {
-            eprintln!("{} quit due to stop signal", thread_info.name());
+            thread_info.set_state("quit due to stop signal");
             break;
         } else if let Some((path, ty)) = lock.queue.pop() {
             lock.working += 1;
@@ -119,9 +119,10 @@ pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
             lock = shared.to_read.lock().unwrap();
             lock.working -= 1;
         } else if lock.working == 0 {
-            eprintln!("{} quit due to no more work", thread_info.name());
+            thread_info.set_state("quit due to no more work");
             break;
         } else {
+            thread_info.set_state("idle");
             lock = shared.reader_waker.wait(lock).unwrap();
         }
     }

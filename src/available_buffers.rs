@@ -134,7 +134,7 @@ impl AvailableBuffers {
                 break to_grow;
             }
             // wait
-            eprintln!("{} is starved for buffers (need {} bytes)", thread_info.name(), need_to_release);
+            thread_info.set_state("out of memory");
             map = self.starving.wait(map).unwrap();
         };
 

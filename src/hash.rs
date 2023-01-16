@@ -32,7 +32,7 @@ fn hash_file(
         match part {
             FilePart::Chunk{buffer, length} => {
                 if position == 0 {
-                    println!("{} hashing {}", thread_info.name(), file_path.display());
+                    thread_info.set_state("hashing");
                 }
                 hasher.update(&buffer[..length]);
                 thread_info.add_bytes(length);
@@ -61,16 +61,17 @@ pub fn hash_files(shared: Arc<Shared>,  thread_info: &ThreadInfo) {
 
     loop {
         if lock.stop_now {
-            eprintln!("{} quit due to stop signal", thread_info.name());
+            thread_info.set_state("quit due to stop signal");
             break;
         } else if let Some((path, rx)) = lock.queue.pop() {
             drop(lock);
             hash_file(path, rx, &mut hasher, thread_info, &shared.buffers);
             lock = shared.to_hash.lock().unwrap();
         } else if lock.stop_when_empty {
-            eprintln!("{} quit due to no more work", thread_info.name());
+            thread_info.set_state("quit due to no more work");
             break;
         } else {
+            thread_info.set_state("idle");
             lock = shared.hasher_waker.wait(lock).unwrap();
         }
     }
