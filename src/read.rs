@@ -14,6 +14,7 @@
  */
 
 use crate::shared::*;
+use crate::thread_info::*;
 
 use std::{fs, io::Read, path::Path, process::exit};
 use std::sync::{Arc, mpsc};
@@ -51,7 +52,7 @@ fn read_dir(dir_path: Arc<Path>,  shared: &Shared) {
     }
 }
 
-fn read_file(file_path: Arc<Path>,  thread_name: &str,  shared: &Shared) {
+fn read_file(file_path: Arc<Path>,  shared: &Shared,  thread_info: &ThreadInfo) {
     let mut file = match fs::File::open(&file_path) {
         Ok(file) => file,
         Err(e) => {
@@ -60,7 +61,10 @@ fn read_file(file_path: Arc<Path>,  thread_name: &str,  shared: &Shared) {
         }
     };
 
-    let mut buffer = shared.buffers.get_buffer(shared.buffers.max_single_buffer_size(), thread_name);
+    let mut buffer = shared.buffers.get_buffer(
+            shared.buffers.max_single_buffer_size(),
+            thread_info
+    );
     let (tx, rx) = mpsc::channel();
     // delay inserting until after first read
     let mut insert = Some((file_path, rx));
@@ -77,7 +81,11 @@ fn read_file(file_path: Arc<Path>,  thread_name: &str,  shared: &Shared) {
             }
             Ok(length) => {
                 tx.send(FilePart::Chunk{buffer, length}).unwrap();
-                buffer = shared.buffers.get_buffer(shared.buffers.max_single_buffer_size(), thread_name);
+                thread_info.add_bytes(length);
+                buffer = shared.buffers.get_buffer(
+                        shared.buffers.max_single_buffer_size(),
+                        thread_info
+                );
             }
         }
         // now insert it
@@ -91,27 +99,27 @@ fn read_file(file_path: Arc<Path>,  thread_name: &str,  shared: &Shared) {
     shared.buffers.return_buffer(buffer);
 }
 
-pub fn read_files(shared: Arc<Shared>, thread_name: String) {
+pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
     let mut lock = shared.to_read.lock().unwrap();
 
     loop {
         if lock.stop_now {
-            eprintln!("{} quit due to stop signal", thread_name);
+            eprintln!("{} quit due to stop signal", thread_info.name());
             break;
         } else if let Some((path, ty)) = lock.queue.pop() {
             lock.working += 1;
             drop(lock);
 
-            println!("{} reading {}", thread_name, path.display());
+            println!("{} reading {}", thread_info.name(), path.display());
             match ty {
-                ReadType::File => read_file(path, &thread_name, &shared),
+                ReadType::File => read_file(path, &shared, thread_info),
                 ReadType::Directory => read_dir(path, &shared),
             }
 
             lock = shared.to_read.lock().unwrap();
             lock.working -= 1;
         } else if lock.working == 0 {
-            eprintln!("{} quit due to no more work", thread_name);
+            eprintln!("{} quit due to no more work", thread_info.name());
             break;
         } else {
             lock = shared.reader_waker.wait(lock).unwrap();

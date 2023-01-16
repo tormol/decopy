@@ -14,6 +14,7 @@
  */
 
 use crate::shared::*;
+use crate::thread_info::*;
 
 use std::path::Path;
 use std::sync::{Arc, mpsc};
@@ -22,7 +23,7 @@ use sha2::{Sha256, Digest};
 
 fn hash_file(
         file_path: Arc<Path>,  parts: mpsc::Receiver<FilePart>,
-        hasher: &mut sha2::Sha256,  thread_name: &str,
+        hasher: &mut sha2::Sha256,  thread_info: &ThreadInfo,
         buffers: &AvailableBuffers,
 ) {
     let mut position = 0;
@@ -31,9 +32,10 @@ fn hash_file(
         match part {
             FilePart::Chunk{buffer, length} => {
                 if position == 0 {
-                    println!("{} hashing {}", thread_name, file_path.display());
+                    println!("{} hashing {}", thread_info.name(), file_path.display());
                 }
                 hasher.update(&buffer[..length]);
+                thread_info.add_bytes(length);
                 position += length;
                 buffers.return_buffer(buffer);
             },
@@ -53,20 +55,20 @@ fn hash_file(
     }
 }
 
-pub fn hash_files(shared: Arc<Shared>,  thread_name: String) {
+pub fn hash_files(shared: Arc<Shared>,  thread_info: &ThreadInfo) {
     let mut hasher = Sha256::new();
     let mut lock = shared.to_hash.lock().unwrap();
 
     loop {
         if lock.stop_now {
-            eprintln!("{} quit due to stop signal", thread_name);
+            eprintln!("{} quit due to stop signal", thread_info.name());
             break;
         } else if let Some((path, rx)) = lock.queue.pop() {
             drop(lock);
-            hash_file(path, rx, &mut hasher, &thread_name, &shared.buffers);
+            hash_file(path, rx, &mut hasher, thread_info, &shared.buffers);
             lock = shared.to_hash.lock().unwrap();
         } else if lock.stop_when_empty {
-            eprintln!("{} quit due to no more work", thread_name);
+            eprintln!("{} quit due to no more work", thread_info.name());
             break;
         } else {
             lock = shared.hasher_waker.wait(lock).unwrap();

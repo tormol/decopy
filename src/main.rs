@@ -19,15 +19,18 @@ extern crate ioprio;
 extern crate sha2;
 extern crate thread_priority;
 
+mod thread_info;
 mod available_buffers;
 mod bytes;
-use bytes::*;
 mod shared;
-use shared::*;
 mod read;
-use read::*;
 mod hash;
+
+use bytes::*;
 use hash::*;
+use read::*;
+use shared::*;
+use thread_info::*;
 
 use std::{fs, num::NonZeroU16, process::exit, sync::Arc, thread, time::Duration};
 use std::path::{Path, PathBuf};
@@ -55,6 +58,10 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+
+    let reader_info = create_info_array("reader", u16::from(args.io_threads).into());
+    let hasher_info = create_info_array("hasher", u16::from(args.hasher_threads).into());
+
     let buffers = AvailableBuffers::new(
             args.max_buffers_memory.into(),
             args.max_buffer_size.into(),
@@ -87,12 +94,12 @@ fn main() {
 
     // start hasher threads
     let mut hasher_threads = Vec::with_capacity(u16::from(args.hasher_threads).into());
-    for n in (1..=args.hasher_threads.into()).into_iter() {
-        let thread_name = format!("hasher_{}", n);
+    for i in 0..hasher_info.len() {
         let shared = shared.clone();
+        let hasher_info = hasher_info.clone();
         let builder = ThreadBuilder::default()
-            .name(thread_name.clone())
-            .priority(ThreadPriority::Min);
+                .name(hasher_info[i].name())
+                .priority(ThreadPriority::Min);
         #[cfg(unix)]
         let builder = builder.policy(
                 ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Batch)
@@ -101,18 +108,22 @@ fn main() {
             if let Err(e) = priority_result {
                 eprintln!("Failed lowering thread priority: {:?}", e);
             }
-            hash_files(shared, thread_name)
+            let info = &hasher_info[i];
+            hash_files(shared, info)
         }).unwrap();
         hasher_threads.push(thread);
     }
 
     // start IO threads
     let mut io_threads = Vec::with_capacity(u16::from(args.io_threads).into());
-    for n in (1..=args.io_threads.into()).into_iter() {
-        let thread_name = format!("io_{}", n);
+    for i in 0..reader_info.len() {
         let shared = shared.clone();
-        let builder = thread::Builder::new().name(thread_name.clone());
-        let thread = builder.spawn(move || read_files(shared, thread_name) ).unwrap();
+        let hasher_info = hasher_info.clone();
+        let builder = thread::Builder::new().name(reader_info[i].name().to_string());
+        let thread = builder.spawn(move || {
+            let info = &hasher_info[i];
+            read_files(shared, info);
+        }).unwrap();
         io_threads.push(thread);
     }
 

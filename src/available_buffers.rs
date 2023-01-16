@@ -13,6 +13,8 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::thread_info::ThreadInfo;
+
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::{Condvar, Mutex, TryLockError};
@@ -79,7 +81,7 @@ impl AvailableBuffers {
         })
     }
 
-    pub fn get_buffer(&self,  requested_size: usize,  thread: &str) -> Box<[u8]> {
+    pub fn get_buffer(&self,  requested_size: usize,  thread_info: &ThreadInfo) -> Box<[u8]> {
         if requested_size == 0 {
             return Box::default();
         }
@@ -132,7 +134,7 @@ impl AvailableBuffers {
                 break to_grow;
             }
             // wait
-            eprintln!("{} is starved for buffers (need {} bytes)", thread, need_to_release);
+            eprintln!("{} is starved for buffers (need {} bytes)", thread_info.name(), need_to_release);
             map = self.starving.wait(map).unwrap();
         };
 
