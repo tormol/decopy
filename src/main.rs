@@ -32,8 +32,9 @@ use read::*;
 use shared::*;
 use thread_info::*;
 
-use std::{fs, num::NonZeroU16, process::exit, sync::Arc, thread, time::Duration};
+use std::{fs, num::NonZeroU16, process::exit, sync::Arc, thread};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 
@@ -59,7 +60,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let reader_info = create_info_array("reader", u16::from(args.io_threads).into());
+    let io_info = create_info_array("io", u16::from(args.io_threads).into());
     let hasher_info = create_info_array("hasher", u16::from(args.hasher_threads).into());
 
     let buffers = AvailableBuffers::new(
@@ -111,25 +112,44 @@ fn main() {
             let info = &hasher_info[i];
             hash_files(shared, info)
         }).unwrap();
-        hasher_threads.push(thread);
+        hasher_threads.push((thread, 0usize));
     }
 
     // start IO threads
     let mut io_threads = Vec::with_capacity(u16::from(args.io_threads).into());
-    for i in 0..reader_info.len() {
+    for i in 0..io_info.len() {
         let shared = shared.clone();
-        let hasher_info = hasher_info.clone();
-        let builder = thread::Builder::new().name(reader_info[i].name().to_string());
+        let io_info = io_info.clone();
+        let builder = thread::Builder::new().name(io_info[i].name().to_string());
         let thread = builder.spawn(move || {
-            let info = &hasher_info[i];
+            let info = &io_info[i];
             read_files(shared, info);
         }).unwrap();
-        io_threads.push(thread);
+        io_threads.push((thread, 0usize));
     }
 
-    // wait for IO threads to finish
+    // log state while wait for IO threads to finish
+    let mut prev = Instant::now();
     loop {
-        eprintln!("buffer memory allocated: {:#}",
+        let now = Instant::now();
+        let mut read = 0;
+        for (info, (_, prev_read)) in io_info.iter().zip(&mut io_threads) {
+            let current = info.processed_bytes();
+            read += current.0 - *prev_read;
+            *prev_read = current.0;
+        }
+        let mut hashed = 0;
+        for (info, (_, prev_hashed)) in hasher_info.iter().zip(&mut hasher_threads) {
+            let current = info.processed_bytes();
+            hashed += current.0 - *prev_hashed;
+            *prev_hashed = current.0;
+        }
+        read = read*(now-prev).as_micros() as usize/1_000_000;
+        hashed = hashed*(now-prev).as_micros() as usize/1_000_000;
+        prev = now;
+        eprintln!("reading {:#}/s, hashing {:#}/s, buffer memory allocated: {:#}",
+                Bytes::new(read),
+                Bytes::new(hashed),
                 Bytes::new(shared.buffers.current_buffers_size()),
         );
 
@@ -138,7 +158,7 @@ fn main() {
             break;
         }
         drop(lock);
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(333)-(Instant::now()-now));
     }
 
     // tell hashers they can stop now
@@ -147,13 +167,13 @@ fn main() {
     drop(lock);
 
     shared.reader_waker.notify_all();
-    for thread in io_threads {
+    for (thread, _) in io_threads {
         eprintln!("joining reader");
         thread.join().unwrap();
     }
 
     shared.hasher_waker.notify_all();
-    for thread in hasher_threads {
+    for (thread, _) in hasher_threads {
         eprintln!("joining hasher");
         thread.join().unwrap();
     }

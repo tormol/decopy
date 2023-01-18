@@ -15,26 +15,21 @@
 
 use crate::bytes::Bytes;
 
-use std::{cell::UnsafeCell, mem::size_of, sync::Arc};
 use std::fmt::{self, Debug, Formatter};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(C, align(128))] // avoid false sharing
 pub struct ThreadInfo {
     thread_name: String,
     processed_bytes: AtomicUsize,
-    state: UnsafeCell<[u8; ThreadInfo::STATE_LENGTH]>,
 }
-unsafe impl Send for ThreadInfo {}
-unsafe impl Sync for ThreadInfo {}
-impl ThreadInfo {
-    pub const STATE_LENGTH: usize = 128-size_of::<(String,AtomicUsize)>();
 
+impl ThreadInfo {
     pub fn new(thread_name: String) -> ThreadInfo {
         ThreadInfo {
             thread_name,
             processed_bytes: AtomicUsize::new(0),
-            state: UnsafeCell::new([0; ThreadInfo::STATE_LENGTH]),
         }
     }
 
