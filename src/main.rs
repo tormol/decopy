@@ -13,6 +13,9 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+#![cfg(target_feature="avx2")]
+//#![cfg(target_has_atomic="128")]
+
 extern crate clap;
 #[cfg(target_os="linux")]
 extern crate ioprio;
