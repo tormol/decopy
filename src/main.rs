@@ -13,6 +13,7 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+extern crate arc_swap;
 extern crate clap;
 #[cfg(target_os="linux")]
 extern crate ioprio;
@@ -127,7 +128,9 @@ fn main() {
         io_threads.push((thread, 0usize));
     }
 
-    // log state while wait for IO threads to finish
+    // show state of each thread while wait for IO threads to finish
+    // undo the first "erase last frame"
+    eprint!("{}", "\n".repeat(io_info.len()+hasher_info.len()+1));
     let mut prev = Instant::now();
     loop {
         let now = Instant::now();
@@ -143,6 +146,18 @@ fn main() {
             hashed += current.0 - *prev_hashed;
             *prev_hashed = current.0;
         }
+
+        // go to beginning of line n up, and erease to end of screen
+        eprint!("\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1);
+        for thread in io_info.iter().chain(hasher_info.iter()) {
+            thread.view_working_on(|path| {
+                match path {
+                    Some(path) => eprintln!("{:10} {:?} {}", thread.name(), thread.state(), path.display()),
+                    None => eprintln!("{:10} {:?}", thread.name(), thread.state()),
+                }
+            });
+        }
+
         read = read*(now-prev).as_micros() as usize/1_000_000;
         hashed = hashed*(now-prev).as_micros() as usize/1_000_000;
         prev = now;

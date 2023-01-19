@@ -19,11 +19,14 @@ use crate::thread_info::*;
 use std::{fs, io::Read, path::PathBuf, process::exit};
 use std::sync::{Arc, mpsc};
 
-fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared) {
+fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo) {
+    thread_info.set_state(Opening);
+    thread_info.set_working_on(Some(dir_path.clone()));
     let entries = fs::read_dir(dir_path.as_path()).unwrap_or_else(|e| {
         eprintln!("Cannot open {}: {}", dir_path.display(), e);
         exit(1);
     });
+    thread_info.set_state(Reading);
     for entry in entries {
         let entry = entry.unwrap_or_else(|e| {
             eprintln!("Error getting entry from {}: {}", dir_path.display(), e);
@@ -53,6 +56,8 @@ fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared) {
 }
 
 fn read_file(file_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo) {
+    thread_info.set_state(Opening);
+    thread_info.set_working_on(Some(file_path.clone()));
     let mut file = match fs::File::open(file_path.as_path()) {
         Ok(file) => file,
         Err(e) => {
@@ -71,6 +76,7 @@ fn read_file(file_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInf
     let mut incomplete = true;
 
     while incomplete {
+        thread_info.set_state(Reading);
         match file.read(&mut buffer) {
             Err(e) => {
                 tx.send(FilePart::Error(e)).unwrap();
@@ -104,24 +110,27 @@ pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
 
     loop {
         if lock.stop_now {
-            eprintln!("{} quit due to stop signal", thread_info.name());
+            thread_info.set_state(Quit);
+            thread_info.set_working_on(None);
             break;
         } else if let Some((path, ty)) = lock.queue.pop() {
             lock.working += 1;
             drop(lock);
 
-            println!("{} reading {}", thread_info.name(), path.display());
             match ty {
                 ReadType::File => read_file(path, &shared, thread_info),
-                ReadType::Directory => read_dir(path, &shared),
+                ReadType::Directory => read_dir(path, &shared, thread_info),
             }
 
             lock = shared.to_read.lock().unwrap();
             lock.working -= 1;
         } else if lock.working == 0 {
-            eprintln!("{} quit due to no more work", thread_info.name());
+            thread_info.set_state(Quit);
+            thread_info.set_working_on(None);
             break;
         } else {
+            thread_info.set_state(Idle);
+            thread_info.set_working_on(None);
             lock = shared.reader_waker.wait(lock).unwrap();
         }
     }

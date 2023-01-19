@@ -13,7 +13,7 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::thread_info::ThreadInfo;
+use crate::thread_info::*;
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Formatter};
@@ -134,7 +134,7 @@ impl AvailableBuffers {
                 break to_grow;
             }
             // wait
-            eprintln!("{} is starved for buffers (need {} bytes)", thread_info.name(), need_to_release);
+            thread_info.set_state(WaitingForMemory);
             map = self.starving.wait(map).unwrap();
         };
 
