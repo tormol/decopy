@@ -16,11 +16,11 @@
 use crate::shared::*;
 use crate::thread_info::*;
 
-use std::{fs, io::Read, path::Path, process::exit};
+use std::{fs, io::Read, path::PathBuf, process::exit};
 use std::sync::{Arc, mpsc};
 
-fn read_dir(dir_path: Arc<Path>,  shared: &Shared) {
-    let entries = fs::read_dir(&dir_path).unwrap_or_else(|e| {
+fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared) {
+    let entries = fs::read_dir(dir_path.as_path()).unwrap_or_else(|e| {
         eprintln!("Cannot open {}: {}", dir_path.display(), e);
         exit(1);
     });
@@ -31,7 +31,7 @@ fn read_dir(dir_path: Arc<Path>,  shared: &Shared) {
         });
         let mut entry_path = dir_path.to_path_buf();
         entry_path.push(entry.path());
-        let entry_path = Arc::<Path>::from(entry_path);
+        let entry_path = Arc::<PathBuf>::from(entry_path);
         let file_type = entry.file_type().unwrap_or_else(|e| {
             eprintln!("Error getting type of {}: {}", entry_path.display(), e);
             exit(1);
@@ -52,8 +52,8 @@ fn read_dir(dir_path: Arc<Path>,  shared: &Shared) {
     }
 }
 
-fn read_file(file_path: Arc<Path>,  shared: &Shared,  thread_info: &ThreadInfo) {
-    let mut file = match fs::File::open(&file_path) {
+fn read_file(file_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo) {
+    let mut file = match fs::File::open(file_path.as_path()) {
         Ok(file) => file,
         Err(e) => {
             eprintln!("Cannot open  {}: {}", file_path.display(), e);

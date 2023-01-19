@@ -15,7 +15,7 @@
 
 pub use crate::available_buffers::AvailableBuffers;
 
-use std::{io, path::Path};
+use std::{io, path::PathBuf};
 use std::fmt::{self, Debug, Formatter};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
@@ -23,7 +23,7 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 pub enum ReadType {File, Directory}
 
 pub struct ReadQueue {
-    pub queue: Vec<(Arc<Path>, ReadType)>,
+    pub queue: Vec<(Arc<PathBuf>, ReadType)>,
     pub stop_now: bool,
     pub working: u32,
 }
@@ -50,7 +50,7 @@ pub enum FilePart {
 }
 
 pub struct HashQueue {
-    pub queue: Vec<(Arc<Path>, mpsc::Receiver<FilePart>)>,
+    pub queue: Vec<(Arc<PathBuf>, mpsc::Receiver<FilePart>)>,
     pub stop_now: bool,
     pub stop_when_empty: bool,
 }

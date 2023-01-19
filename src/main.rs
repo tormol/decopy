@@ -32,8 +32,7 @@ use read::*;
 use shared::*;
 use thread_info::*;
 
-use std::{fs, num::NonZeroU16, process::exit, sync::Arc, thread};
-use std::path::{Path, PathBuf};
+use std::{fs, num::NonZeroU16, path::PathBuf, process::exit, sync::Arc, thread};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -79,7 +78,7 @@ fn main() {
             eprintln!("Cannot canoniicalize {}: {}", dir_path.display(), e);
             exit(1);
         });
-        to_read.queue.push((Arc::<Path>::from(dir_path), ReadType::Directory));
+        to_read.queue.push((Arc::<PathBuf>::from(dir_path), ReadType::Directory));
     }
     drop(to_read);
 
