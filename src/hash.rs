@@ -41,7 +41,11 @@ fn hash_file(
                 buffers.return_buffer(buffer);
             },
             FilePart::Error(e) => {
-                println!("{} got IO error after {} bytes: {}", file_path.display(), position, e);
+                thread_info.log_message(format!("{} got IO error after {} bytes: {}",
+                        file_path.display(),
+                        position,
+                        e
+                ));
                 hasher.reset();
                 return;
             },

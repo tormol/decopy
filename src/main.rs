@@ -33,7 +33,8 @@ use read::*;
 use shared::*;
 use thread_info::*;
 
-use std::{fs, num::NonZeroU16, path::PathBuf, process::exit, sync::Arc, thread};
+use std::{fs, num::NonZeroU16, path::PathBuf, process::exit, thread};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -60,8 +61,17 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let io_info = create_info_array("io", u16::from(args.io_threads).into());
-    let hasher_info = create_info_array("hasher", u16::from(args.hasher_threads).into());
+    let (log_channel, log_messages) = mpsc::channel::<String>();
+    let io_info = create_info_array(
+            "io",
+            u16::from(args.io_threads).into(),
+            log_channel.clone()
+    );
+    let hasher_info = create_info_array(
+            "hasher",
+            u16::from(args.hasher_threads).into(),
+            log_channel
+    );
 
     let buffers = AvailableBuffers::new(
             args.max_buffers_memory.into(),
@@ -149,6 +159,12 @@ fn main() {
 
         // go to beginning of line n up, and erease to end of screen
         eprint!("\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1);
+        // print logs (these are not erased, and will be visible in scrollback)
+        while let Ok(message) = log_messages.try_recv() {
+            eprintln!("{}", message);
+        }
+
+        // display state of each thread
         for thread in io_info.iter().chain(hasher_info.iter()) {
             thread.view_working_on(|path| {
                 match path {

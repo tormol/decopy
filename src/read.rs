@@ -45,7 +45,10 @@ fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo)
             ReadType::Directory
         } else {
             let file_type = if file_type.is_symlink() {"symlink"} else {"special file"};
-            println!("{} is a {}, skipping.", entry_path.display(), file_type);
+            thread_info.log_message(format!("{} is a {}, skipping.",
+                    entry_path.display(),
+                    file_type,
+            ));
             continue;
         };
         let mut lock = shared.to_read.lock().unwrap();
@@ -61,7 +64,7 @@ fn read_file(file_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInf
     let mut file = match fs::File::open(file_path.as_path()) {
         Ok(file) => file,
         Err(e) => {
-            eprintln!("Cannot open  {}: {}", file_path.display(), e);
+            thread_info.log_message(format!("Cannot open  {}: {}", file_path.display(), e));
             return;
         }
     };

@@ -17,6 +17,7 @@ use crate::thread_info::*;
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Formatter};
+use std::process::exit;
 use std::sync::{Condvar, Mutex, TryLockError};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -142,11 +143,14 @@ impl AvailableBuffers {
         let extra_capacity = buffer.capacity() - buffer.len();
         if extra_capacity > 0 {
             self.current_buffers_size.fetch_add(extra_capacity, Ordering::SeqCst);
-            eprintln!("vec of size {} has extra capacity {}", buffer.len(), extra_capacity);
+            thread_info.log_message(format!("vec of size {} has extra capacity {}",
+                    buffer.len(),
+                    extra_capacity,
+            ));
             buffer.resize(buffer.capacity(), 0);
         }
         if buffer.len() != requested_size {
-            eprintln!("requested {} got {}", requested_size, buffer.len());
+            thread_info.log_message(format!("requested {} got {}", requested_size, buffer.len()));
         }
         buffer.into_boxed_slice()
     }
@@ -165,10 +169,11 @@ impl AvailableBuffers {
                 Some((&(len, _), _)) if len > size => {
                     self.current_buffers_size.fetch_sub(buffer.len(), Ordering::Relaxed);
                     drop(map);
-                    panic!("map has a buffer of size {}, whcih is bigger than the max of {}",
+                    eprintln!("map has a buffer of size {}, whcih is bigger than the max of {}",
                             len,
                             self.max_single_buffer
                     );
+                    exit(1);
                 },
                 _ => 0,
             }
@@ -181,7 +186,8 @@ impl AvailableBuffers {
         if let Some(buffer) = map.insert((size, index), buffer) {
             self.current_buffers_size.fetch_sub(buffer.len(), Ordering::Relaxed);
             drop(map);
-            panic!("There already is a buffer with index ({}, {})", size, index);
+            eprintln!("There already is a buffer with index ({}, {})", size, index);
+            exit(1);
         }
         drop(map);
         // 

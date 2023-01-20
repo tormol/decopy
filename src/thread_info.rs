@@ -15,9 +15,10 @@
 
 use crate::bytes::Bytes;
 
-use std::{ops::Deref, sync::Arc};
 use std::fmt::{self, Debug, Formatter};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, mpsc::Sender};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arc_swap::ArcSwapOption;
@@ -53,15 +54,21 @@ impl TryFrom<usize> for ThreadState {
 #[repr(C, align(128))] // avoid false sharing
 pub struct ThreadInfo {
     thread_name: String,
+    // Sender is not Sync, so can't store it directly because all ThreadInfo are shared together
+    // to all threads..
+    // Therefore just wrap it in a mutex to make it work:
+    // Logging should be rare, so performance is not an issue.
+    log_channel: Mutex<Sender<String>>,
     processed_bytes: AtomicUsize,
     state: AtomicUsize,
     working_on: ArcSwapOption<PathBuf>,
 }
 
 impl ThreadInfo {
-    pub fn new(thread_name: String) -> ThreadInfo {
+    pub fn new(thread_name: String,  log_channel: Sender<String>) -> ThreadInfo {
         ThreadInfo {
             thread_name,
+            log_channel: Mutex::new(log_channel),
             processed_bytes: AtomicUsize::new(0),
             state: AtomicUsize::new(Idle as usize),
             working_on: ArcSwapOption::empty(),
@@ -70,6 +77,10 @@ impl ThreadInfo {
 
     pub fn name(&self) -> &str {
         &self.thread_name
+    }
+
+    pub fn log_message(&self,  message: String) {
+        self.log_channel.lock().unwrap().send(message).unwrap()
     }
 
     pub fn processed_bytes(&self) -> Bytes {
@@ -121,11 +132,12 @@ impl Debug for ThreadInfo {
     }
 }
 
-pub fn create_info_array(name_prefix: &str,  count: usize) -> Arc<[ThreadInfo]> {
+pub fn create_info_array(name_prefix: &str,  count: usize,  log_channel: Sender<String>)
+-> Arc<[ThreadInfo]> {
     let mut infos = Vec::with_capacity(count+1);
     for n in 1..=count {
         let name = format!("{} {}", name_prefix, n);
-        let info = ThreadInfo::new(name);
+        let info = ThreadInfo::new(name, log_channel.clone());
         infos.push(info);
     }
     infos.into()
