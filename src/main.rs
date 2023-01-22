@@ -20,6 +20,7 @@ extern crate ioprio;
 extern crate sha2;
 extern crate thread_priority;
 
+mod path_decoding;
 mod thread_info;
 mod available_buffers;
 mod bytes;
@@ -28,12 +29,14 @@ mod read;
 mod hash;
 
 use bytes::*;
+use path_decoding::*;
 use hash::*;
 use read::*;
 use shared::*;
 use thread_info::*;
 
-use std::{fs, num::NonZeroU16, path::PathBuf, process::exit, thread};
+use std::{fmt::Write, fs, num::NonZeroU16, path::PathBuf, process::exit, thread};
+use std::io::{Write as ioWrite, stderr};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -138,9 +141,12 @@ fn main() {
         io_threads.push((thread, 0usize));
     }
 
+    // buffer output but also allow lookback
+    let mut display: String;
     // show state of each thread while wait for IO threads to finish
     // undo the first "erase last frame"
-    eprint!("{}", "\n".repeat(io_info.len()+hasher_info.len()+1));
+    display = "\n".repeat(io_info.len()+hasher_info.len()+1);
+
     let mut prev = Instant::now();
     loop {
         let now = Instant::now();
@@ -158,36 +164,42 @@ fn main() {
         }
 
         // go to beginning of line n up, and erease to end of screen
-        eprint!("\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1);
+        write!(&mut display, "\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1).unwrap();
         // print logs (these are not erased, and will be visible in scrollback)
         while let Ok(message) = log_messages.try_recv() {
-            eprintln!("{}", message);
+            display.push_str(&message);
+            display.push('\n');
         }
 
         // display state of each thread
         for thread in io_info.iter().chain(hasher_info.iter()) {
+            write!(&mut display, "{:10} {:?}", thread.name(), thread.state()).unwrap();
             thread.view_working_on(|path| {
-                match path {
-                    Some(path) => eprintln!("{:10} {:?} {}", thread.name(), thread.state(), path.display()),
-                    None => eprintln!("{:10} {:?}", thread.name(), thread.state()),
+                if let Some(path) = path {
+                    display.push(' ');
+                    write_printable(path, &mut display);
                 }
             });
+            display.push('\n');
         }
 
         read = read*(now-prev).as_micros() as usize/1_000_000;
         hashed = hashed*(now-prev).as_micros() as usize/1_000_000;
         prev = now;
-        eprintln!("reading {:#}/s, hashing {:#}/s, buffer memory allocated: {:#}",
+        writeln!(&mut display,
+                "reading {:#}/s, hashing {:#}/s, buffer memory allocated: {:#}",
                 Bytes::new(read),
                 Bytes::new(hashed),
                 Bytes::new(shared.buffers.current_buffers_size()),
-        );
+        ).unwrap();
 
         let lock = shared.to_read.lock().unwrap();
         if (lock.queue.is_empty() && lock.working == 0) || lock.stop_now {
             break;
         }
         drop(lock);
+        stderr().write_all(display.as_bytes()).unwrap();
+        display.clear();
         thread::sleep(Duration::from_millis(333)-(Instant::now()-now));
     }
 
