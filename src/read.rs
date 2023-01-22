@@ -16,27 +16,27 @@
 use crate::shared::*;
 use crate::thread_info::*;
 
-use std::{fs, io::Read, path::PathBuf, process::exit};
+use std::{fs, io::Read, process::exit};
 use std::sync::{Arc, mpsc};
 
-fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo) {
+fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &ThreadInfo) {
     thread_info.set_state(Opening);
     thread_info.set_working_on(Some(dir_path.clone()));
     let entries = fs::read_dir(dir_path.as_path()).unwrap_or_else(|e| {
-        eprintln!("Cannot open {}: {}", dir_path.display(), e);
+        eprintln!("Cannot open {}: {}", dir_path, e);
         exit(1);
     });
     thread_info.set_state(Reading);
     for entry in entries {
         let entry = entry.unwrap_or_else(|e| {
-            eprintln!("Error getting entry from {}: {}", dir_path.display(), e);
+            eprintln!("Error getting entry from {}: {}", dir_path, e);
             exit(1);
         });
         let mut entry_path = dir_path.to_path_buf();
         entry_path.push(entry.path());
-        let entry_path = Arc::<PathBuf>::from(entry_path);
+        let entry_path = Arc::new(PrintablePath::from(entry_path));
         let file_type = entry.file_type().unwrap_or_else(|e| {
-            eprintln!("Error getting type of {}: {}", entry_path.display(), e);
+            eprintln!("Error getting type of {}: {}", entry_path, e);
             exit(1);
         });
         let file_type = if file_type.is_file() {
@@ -45,10 +45,7 @@ fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo)
             ReadType::Directory
         } else {
             let file_type = if file_type.is_symlink() {"symlink"} else {"special file"};
-            thread_info.log_message(format!("{} is a {}, skipping.",
-                    entry_path.display(),
-                    file_type,
-            ));
+            thread_info.log_message(format!("{} is a {}, skipping.", entry_path, file_type));
             continue;
         };
         let mut lock = shared.to_read.lock().unwrap();
@@ -58,13 +55,13 @@ fn read_dir(dir_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo)
     }
 }
 
-fn read_file(file_path: Arc<PathBuf>,  shared: &Shared,  thread_info: &ThreadInfo) {
+fn read_file(file_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &ThreadInfo) {
     thread_info.set_state(Opening);
     thread_info.set_working_on(Some(file_path.clone()));
     let mut file = match fs::File::open(file_path.as_path()) {
         Ok(file) => file,
         Err(e) => {
-            thread_info.log_message(format!("Cannot open  {}: {}", file_path.display(), e));
+            thread_info.log_message(format!("Cannot open  {}: {}", file_path, e));
             return;
         }
     };

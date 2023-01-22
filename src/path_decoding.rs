@@ -13,8 +13,11 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+use std::borrow::Borrow;
 use std::ffi::OsStr;
-use std::path::{MAIN_SEPARATOR, Component, Path};
+use std::fmt::{self, Debug, Display, Formatter};
+use std::ops::Deref;
+use std::path::{MAIN_SEPARATOR, Component, Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(target_os="wasi")]
@@ -35,8 +38,16 @@ fn printable_char(c: char) -> char {
     }
 }
 
+pub fn is_printable_str(path: &str) -> bool {
+    path.bytes().all(|b| b > 0x1f  &&  b != 127 )
+}
+
+pub fn to_printable(path: &Path) -> Option<&str> {
+    path.to_str().filter(|&s| is_printable_str(s) )
+}
+
 fn printable_str(s: &str,  out: &mut String) {
-    if s.bytes().all(|b| b > 0x1f  &&  b != 127 ) {
+    if is_printable_str(s) {
         // common case of no escaping necessary
         out.push_str(s);
     } else {
@@ -130,6 +141,111 @@ pub fn write_printable(path: &Path,  out: &mut String) {
                 #[cfg(not(any(unix, target_os="wasi", windows)))]
                 None => not_printable(part.as_os_str(), out),
             }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct PrintablePath {
+    printable: String,
+    original: Option<PathBuf>,
+}
+
+impl PrintablePath {
+    pub fn as_path(&self) -> &Path {
+        match &self.original {
+            Some(ref path) => path.as_path(),
+            None => Path::new(self.printable.as_str()),
+        }
+    }
+
+    pub fn add(&self,  entry: PathBuf) -> Self {
+        let mut entry_path = self.as_path().to_path_buf();
+        entry_path.push(entry);
+        PrintablePath::from(entry_path)
+    }
+}
+
+impl Display for PrintablePath {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        fmtr.write_str(&self.printable)
+    }
+}
+
+impl Debug for PrintablePath {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        match &self.original {
+            Some(ref path) => Debug::fmt(path, fmtr),
+            None => Debug::fmt(&self.printable, fmtr),
+        }
+    }
+}
+
+impl PartialEq for PrintablePath {
+    fn eq(&self,  other: &Self) -> bool {
+        match (&self.original, &other.original) {
+            (Some(ref a), Some(ref b)) => a == b,
+            (None, None) => self.printable == other.printable,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PrintablePath {}
+
+impl Deref for PrintablePath {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl Borrow<Path> for PrintablePath {
+    fn borrow(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl AsRef<Path> for PrintablePath {
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl From<PathBuf> for PrintablePath {
+    fn from(path: PathBuf) -> PrintablePath {
+        let original = match path.into_os_string().into_string() {
+            Ok(s) if is_printable_str(&s) => {
+                return PrintablePath { printable: s,  original: None };
+            },
+            // get back original 
+            Ok(utf8) => PathBuf::from(utf8),
+            Err(not_utf8) => PathBuf::from(not_utf8),
+        };
+
+        let mut printable = String::new();
+        write_printable(&original, &mut printable);
+        PrintablePath { printable,  original: Some(original) }
+    }
+}
+
+impl From<&Path> for PrintablePath {
+    fn from(path: &Path) -> PrintablePath {
+        if let Some(s) = to_printable(path) {
+            PrintablePath { printable: s.to_string(),  original: None }
+        } else {
+            let mut printable = String::new();
+            write_printable(path, &mut printable);
+            PrintablePath { printable,  original: Some(path.to_owned()) }
+        }
+    }
+}
+
+impl From<PrintablePath> for PathBuf {
+    fn from(printable: PrintablePath) -> PathBuf {
+        match printable.original {
+            Some(path_buf) => path_buf,
+            None => PathBuf::from(printable.printable),
         }
     }
 }

@@ -13,16 +13,16 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::path_decoding::*;
 use crate::shared::*;
 use crate::thread_info::*;
 
-use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 
 use sha2::{Sha256, Digest};
 
 fn hash_file(
-        file_path: Arc<PathBuf>,  parts: mpsc::Receiver<FilePart>,
+        file_path: Arc<PrintablePath>,  parts: mpsc::Receiver<FilePart>,
         hasher: &mut sha2::Sha256,  thread_info: &ThreadInfo,
         buffers: &AvailableBuffers,
 ) {
@@ -42,7 +42,7 @@ fn hash_file(
             },
             FilePart::Error(e) => {
                 thread_info.log_message(format!("{} got IO error after {} bytes: {}",
-                        file_path.display(),
+                        file_path,
                         position,
                         e
                 ));
@@ -53,10 +53,10 @@ fn hash_file(
     }
 
     if position == 0 {
-        println!("{} is empty", file_path.display());
+        println!("{} is empty", file_path);
     } else {
         let hash_result = hasher.finalize_reset();
-        println!("{} {} bytes {:#x}", file_path.display(), position, hash_result);
+        println!("{} {} bytes {:#x}", file_path, position, hash_result);
     }
 }
 

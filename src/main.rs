@@ -89,10 +89,10 @@ fn main() {
     let mut to_read = shared.to_read.lock().unwrap();
     for dir_path in args.roots {
         let dir_path = fs::canonicalize(&dir_path).unwrap_or_else(|e| {
-            eprintln!("Cannot canoniicalize {}: {}", dir_path.display(), e);
+            eprintln!("Cannot canoniicalize {}: {}", PrintablePath::from(dir_path), e);
             exit(1);
         });
-        to_read.queue.push((Arc::<PathBuf>::from(dir_path), ReadType::Directory));
+        to_read.queue.push((Arc::new(dir_path.into()), ReadType::Directory));
     }
     drop(to_read);
 

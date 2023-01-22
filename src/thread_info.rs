@@ -14,10 +14,10 @@
  */
 
 use crate::bytes::Bytes;
+use crate::path_decoding::PrintablePath;
 
 use std::fmt::{self, Debug, Formatter};
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc::Sender};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -61,7 +61,7 @@ pub struct ThreadInfo {
     log_channel: Mutex<Sender<String>>,
     processed_bytes: AtomicUsize,
     state: AtomicUsize,
-    working_on: ArcSwapOption<PathBuf>,
+    working_on: ArcSwapOption<PrintablePath>,
 }
 
 impl ThreadInfo {
@@ -100,13 +100,13 @@ impl ThreadInfo {
         self.state.store(state as usize, Ordering::Relaxed)
     }
 
-    pub fn view_working_on<R, F: FnOnce(Option<&Path>)->R>(&self,  view: F) -> R{
+    pub fn view_working_on<R, F: FnOnce(Option<&PrintablePath>)->R>(&self,  view: F) -> R{
         match self.working_on.load().deref() {
-            &Some(ref path) => view(Some(path.as_path())),
+            &Some(ref path) => view(Some(path)),
             &None => view(None),
         }
     }
-    pub fn set_working_on(&self,  path: Option<Arc<PathBuf>>) {
+    pub fn set_working_on(&self,  path: Option<Arc<PrintablePath>>) {
         self.working_on.store(path);
     }
 }
@@ -118,7 +118,7 @@ impl Debug for ThreadInfo {
                 write!(fmtr, "{}: {:?} {}, {}",
                         &self.thread_name,
                         self.state(),
-                        path.display(),
+                        path,
                         self.processed_bytes(),
                 )
             } else {
