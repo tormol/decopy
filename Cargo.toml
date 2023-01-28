@@ -17,3 +17,10 @@ thread-priority = "0.10.0"
 
 [target.'cfg(target_os="linux")'.dependencies]
 ioprio = "0.2.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
