@@ -104,6 +104,7 @@ dependencies = [
  "arc-swap",
  "clap",
  "ioprio",
+ "is-terminal",
  "sha2",
  "thread-priority",
 ]

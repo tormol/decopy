@@ -15,6 +15,7 @@
 
 extern crate arc_swap;
 extern crate clap;
+extern crate is_terminal;
 #[cfg(target_os="linux")]
 extern crate ioprio;
 extern crate sha2;
@@ -41,7 +42,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-
+use is_terminal::IsTerminal;
 use thread_priority::{ThreadBuilder, ThreadPriority};
 #[cfg(unix)]
 use thread_priority::unix::{NormalThreadSchedulePolicy, ThreadSchedulePolicy};
@@ -141,11 +142,19 @@ fn main() {
         io_threads.push((thread, 0usize));
     }
 
+    let is_terminal = stderr().is_terminal();
+    let interval = match is_terminal {
+        true => Duration::from_millis(200),
+        false => Duration::from_secs(1),
+    };
+
     // buffer output but also allow lookback
-    let mut display: String;
-    // show state of each thread while wait for IO threads to finish
-    // undo the first "erase last frame"
-    display = "\n".repeat(io_info.len()+hasher_info.len()+1);
+    let mut display = String::new();
+    if is_terminal {
+        // show state of each thread while wait for IO threads to finish
+        // undo the first "erase last frame"
+        display = "\n".repeat(io_info.len()+hasher_info.len()+1);
+    }
 
     let mut prev = Instant::now();
     loop {
@@ -163,8 +172,10 @@ fn main() {
             *prev_hashed = current.0;
         }
 
-        // go to beginning of line n up, and erease to end of screen
-        write!(&mut display, "\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1).unwrap();
+        if is_terminal {
+            // go to beginning of line n up, and erase to end of screen
+            write!(&mut display, "\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1).unwrap();
+        }
         // print logs (these are not erased, and will be visible in scrollback)
         while let Ok(message) = log_messages.try_recv() {
             display.push_str(&message);
@@ -200,7 +211,7 @@ fn main() {
         drop(lock);
         stderr().write_all(display.as_bytes()).unwrap();
         display.clear();
-        thread::sleep(Duration::from_millis(333)-(Instant::now()-now));
+        thread::sleep(interval - (Instant::now()-now));
     }
 
     // tell hashers they can stop now
