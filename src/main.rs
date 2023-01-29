@@ -15,9 +15,9 @@
 
 extern crate arc_swap;
 extern crate clap;
-extern crate is_terminal;
 #[cfg(target_os="linux")]
 extern crate ioprio;
+extern crate is_terminal;
 extern crate sha2;
 extern crate thread_priority;
 
@@ -36,8 +36,9 @@ use read::*;
 use shared::*;
 use thread_info::*;
 
-use std::{fmt::Write, fs, num::NonZeroU16, path::PathBuf, process::exit, thread};
+use std::{fmt::Write, fs, path::PathBuf, process::exit, str::FromStr, thread};
 use std::io::{Write as ioWrite, stderr};
+use std::num::{NonZeroU16, NonZeroU64};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,34 @@ use is_terminal::IsTerminal;
 use thread_priority::{ThreadBuilder, ThreadPriority};
 #[cfg(unix)]
 use thread_priority::unix::{NormalThreadSchedulePolicy, ThreadSchedulePolicy};
+
+#[derive(Clone,Copy, Debug)]
+struct Rate(Duration);
+impl FromStr for Rate {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Rate, String> {
+        if let Some(integer) = s.strip_suffix("ms") {
+            match NonZeroU64::from_str(integer.trim_end()) {
+                Ok(millis) => Ok(Rate(Duration::from_millis(millis.into()))),
+                Err(e) => Err(e.to_string()),
+            }
+        } else if let Some(decimal) = s.strip_suffix("s") {
+            match f32::from_str(decimal.trim_end()) {
+                Ok(secs) if !secs.is_finite() => Err("duration must be finite".to_string()),
+                Ok(secs) if secs <= 0.0 => Err("duration must be positive".to_string()),
+                Ok(secs) => Ok(Rate(Duration::from_secs_f32(secs))),
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            match f32::from_str(s) {
+                Ok(rate) if !rate.is_finite() => Err("rate must be finite".to_string()),
+                Ok(rate) if rate <= 0.0 => Err("rate must be positive".to_string()),
+                Ok(rate) => Ok(Rate(Duration::from_secs_f32(rate.recip()))),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(arg_required_else_help=true, author, version, about, long_about=None)]
@@ -58,6 +87,8 @@ struct Args {
     max_buffer_size: Bytes,
     #[arg(short, long, value_name="MAX_MEMORY_USAGE_OF_BUFFERS", default_value_t=Bytes::new(1<<30))]
     max_buffers_memory: Bytes,
+    #[arg(short, long, value_name="RATE")]
+    refresh_rate: Option<Rate>,
     #[arg(required = true)]
     roots: Vec<PathBuf>,
 }
@@ -143,9 +174,10 @@ fn main() {
     }
 
     let is_terminal = stderr().is_terminal();
-    let interval = match is_terminal {
-        true => Duration::from_millis(200),
-        false => Duration::from_secs(1),
+    let interval = match args.refresh_rate {
+        Some(rate) => rate.0,
+        None if is_terminal => Duration::from_millis(100),
+        None => Duration::from_secs(1),
     };
 
     // buffer output but also allow lookback
