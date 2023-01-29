@@ -192,12 +192,6 @@ fn main() {
 
     // buffer output but also allow lookback
     let mut display = String::new();
-    if is_terminal {
-        // show state of each thread while wait for IO threads to finish
-        // undo the first "erase last frame"
-        display = "\n".repeat(io_info.len()+hasher_info.len()+1);
-    }
-
     let mut prev = Instant::now();
     loop {
         let now = Instant::now();
@@ -214,42 +208,42 @@ fn main() {
             *prev_hashed = current.0;
         }
 
-        if is_terminal {
-            // go to beginning of line n up, and erase to end of screen
-            write!(&mut display, "\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1).unwrap();
-        } else {
-            display.push('\n');
-        }
         // print logs (these are not erased, and will be visible in scrollback)
         while let Ok(message) = log_messages.try_recv() {
             display.push_str(&message);
             display.push('\n');
         }
 
-        // display state of each thread
-        for thread in io_info.iter().chain(hasher_info.iter()) {
-            write!(&mut display, "{:10} {:?}", thread.name(), thread.state()).unwrap();
-            thread.view_working_on(|path| {
-                if let Some(path) = path {
-                    display.push(' ');
-                    path.display_within(&mut display, terminal_width);
-                }
-            });
-            display.push('\n');
+        if is_terminal {
+            // display state of each thread
+            for thread in io_info.iter().chain(hasher_info.iter()) {
+                write!(&mut display, "{:10} {:?}", thread.name(), thread.state()).unwrap();
+                thread.view_working_on(|path| {
+                    if let Some(path) = path {
+                        display.push(' ');
+                        path.display_within(&mut display, terminal_width);
+                    }
+                });
+                display.push('\n');
+            }
         }
 
-        read = read*(now-prev).as_micros() as usize/1_000_000;
-        hashed = hashed*(now-prev).as_micros() as usize/1_000_000;
-        prev = now;
-        writeln!(&mut display,
-                "reading {:#}/s, hashing {:#}/s, buffer memory allocated: {:#}",
-                Bytes::new(read),
-                Bytes::new(hashed),
-                Bytes::new(shared.buffers.current_buffers_size()),
-        ).unwrap();
+        if is_terminal || now >= prev + interval {
+            read = read*(now-prev).as_micros() as usize/1_000_000;
+            hashed = hashed*(now-prev).as_micros() as usize/1_000_000;
+            prev = now;
+            writeln!(&mut display,
+                    "reading {:#}/s, hashing {:#}/s, buffer memory allocated: {:#}",
+                    Bytes::new(read),
+                    Bytes::new(hashed),
+                    Bytes::new(shared.buffers.current_buffers_size()),
+            ).unwrap();
+        }
 
-        stderr().write_all(display.as_bytes()).unwrap();
-        stderr().flush().unwrap();
+        let mut stderr = stderr().lock();
+        stderr.write_all(display.as_bytes()).unwrap();
+        stderr.flush().unwrap();
+        drop(stderr);
         display.clear();
 
         let lock = shared.to_read.lock().unwrap();
@@ -257,7 +251,19 @@ fn main() {
             break;
         }
         drop(lock);
-        thread::sleep(interval - (Instant::now()-now));
+
+        // prepare the next frame
+        if is_terminal {
+            // go to beginning of line n up, and erase to end of screen
+            write!(&mut display, "\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1).unwrap();
+        }
+
+        if let Some(deadline_in) = interval.checked_sub(now.elapsed()) {
+            if let Ok(message) = log_messages.recv_timeout(deadline_in) {
+                display.push_str(&message);
+                display.push('\n');
+            }
+        } // else continue without sleeping
     }
 
     // tell hashers they can stop now
@@ -276,4 +282,12 @@ fn main() {
         eprintln!("joining hasher");
         thread.join().unwrap();
     }
+
+    // print any remaining logs
+    while let Ok(message) = log_messages.try_recv() {
+        display.push_str(&message);
+        display.push('\n');
+    }
+    stderr().write_all(display.as_bytes()).unwrap();
+    display.clear();
 }
