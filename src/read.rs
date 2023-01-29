@@ -17,6 +17,7 @@ use crate::shared::*;
 use crate::thread_info::*;
 
 use std::{fs, io::Read, process::exit};
+use std::num::NonZeroU64;
 use std::sync::{Arc, mpsc};
 
 fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &ThreadInfo) {
@@ -28,19 +29,34 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
     });
     thread_info.set_state(Reading);
     for entry in entries {
-        let entry = entry.unwrap_or_else(|e| {
-            eprintln!("Error getting entry from {}: {}", dir_path, e);
-            exit(1);
-        });
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                thread_info.log_message(format!("Error getting entry from {}: {}", dir_path, e));
+                continue;
+            }
+        };
         let mut entry_path = dir_path.to_path_buf();
         entry_path.push(entry.path());
         let entry_path = Arc::new(PrintablePath::from(entry_path));
-        let file_type = entry.file_type().unwrap_or_else(|e| {
-            eprintln!("Error getting type of {}: {}", entry_path, e);
-            exit(1);
-        });
+
+        let file_type = match entry.file_type() {
+            Ok(typ) => typ,
+            Err(e) => {
+                thread_info.log_message(format!("Error getting type of {}: {}", entry_path, e));
+                continue;
+            }
+        };
         let file_type = if file_type.is_file() {
-            ReadType::File
+            let size = match entry.metadata() {
+                Ok(metadata) if metadata.len() == 0 => 1,
+                Ok(metadata) => metadata.len(),
+                Err(e) => {
+                    thread_info.log_message(format!("Error getting metadata of {}: {}", entry_path, e));
+                    continue;
+                }
+            };
+            ReadType::File(NonZeroU64::new(size).unwrap())
         } else if file_type.is_dir() {
             ReadType::Directory
         } else {
@@ -48,6 +64,7 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
             thread_info.log_message(format!("{} is a {}, skipping.", entry_path, file_type));
             continue;
         };
+
         let mut lock = shared.to_read.lock().unwrap();
         lock.queue.push((entry_path, file_type));
         drop(lock);
@@ -55,7 +72,10 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
     }
 }
 
-fn read_file(file_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &ThreadInfo) {
+fn read_file(
+        file_path: Arc<PrintablePath>,  size: u64,
+        shared: &Shared,  thread_info: &ThreadInfo,
+) {
     thread_info.set_state(Opening);
     thread_info.set_working_on(Some(file_path.clone()));
     let mut file = match fs::File::open(file_path.as_path()) {
@@ -66,10 +86,10 @@ fn read_file(file_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Thr
         }
     };
 
-    let mut buffer = shared.buffers.get_buffer(
-            shared.buffers.max_single_buffer_size(),
-            thread_info
-    );
+    let mut remaining_size = usize::try_from(size)
+            .unwrap_or(shared.buffers.max_single_buffer_size());
+    let mut buffer = shared.buffers.get_buffer(remaining_size, thread_info);
+
     let (tx, rx) = mpsc::channel();
     // delay inserting until after first read
     let mut insert = Some((file_path, rx));
@@ -88,10 +108,11 @@ fn read_file(file_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Thr
             Ok(length) => {
                 tx.send(FilePart::Chunk{buffer, length}).unwrap();
                 thread_info.add_bytes(length);
-                buffer = shared.buffers.get_buffer(
-                        shared.buffers.max_single_buffer_size(),
-                        thread_info
-                );
+                remaining_size = match remaining_size.checked_sub(length) {
+                    Some(remaining) => remaining,
+                    None => shared.buffers.max_single_buffer_size(),
+                };
+                buffer = shared.buffers.get_buffer(remaining_size, thread_info);
             }
         }
         // now insert it
@@ -118,7 +139,7 @@ pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
             drop(lock);
 
             match ty {
-                ReadType::File => read_file(path, &shared, thread_info),
+                ReadType::File(size) => read_file(path, size.into(), &shared, thread_info),
                 ReadType::Directory => read_dir(path, &shared, thread_info),
             }
 
