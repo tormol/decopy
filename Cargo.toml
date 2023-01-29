@@ -13,6 +13,7 @@ arc-swap = "1.6.0"
 clap = {version="4.1.1", features=["derive"]}
 is-terminal = "0.4.2"
 sha2 = {version="0.10.6", features=["asm"]}
+term_size = "0.3.2"
 thread-priority = "0.10.0"
 
 [target.'cfg(target_os="linux")'.dependencies]

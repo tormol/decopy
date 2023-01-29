@@ -19,6 +19,7 @@ extern crate clap;
 extern crate ioprio;
 extern crate is_terminal;
 extern crate sha2;
+extern crate term_size;
 extern crate thread_priority;
 
 mod path_decoding;
@@ -179,6 +180,15 @@ fn main() {
         None if is_terminal => Duration::from_millis(100),
         None => Duration::from_secs(1),
     };
+    let terminal_width = match term_size::dimensions_stderr() {
+        Some((width, _height)) => width,
+        None => {
+            if is_terminal {
+                eprintln!("Cannot get terminal size of stderr despite it being a terminal");
+            }
+            !0
+        }
+    };
 
     // buffer output but also allow lookback
     let mut display = String::new();
@@ -220,7 +230,7 @@ fn main() {
             thread.view_working_on(|path| {
                 if let Some(path) = path {
                     display.push(' ');
-                    write_printable(path, &mut display);
+                    path.display_within(&mut display, terminal_width);
                 }
             });
             display.push('\n');
@@ -236,13 +246,15 @@ fn main() {
                 Bytes::new(shared.buffers.current_buffers_size()),
         ).unwrap();
 
+        stderr().write_all(display.as_bytes()).unwrap();
+        stderr().flush().unwrap();
+        display.clear();
+
         let lock = shared.to_read.lock().unwrap();
         if (lock.queue.is_empty() && lock.working == 0) || lock.stop_now {
             break;
         }
         drop(lock);
-        stderr().write_all(display.as_bytes()).unwrap();
-        display.clear();
         thread::sleep(interval - (Instant::now()-now));
     }
 

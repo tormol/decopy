@@ -14,6 +14,7 @@
  */
 
 use std::borrow::Borrow;
+use std::cmp::min;
 use std::ffi::OsStr;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::ops::Deref;
@@ -145,6 +146,106 @@ pub fn write_printable(path: &Path,  out: &mut String) {
     }
 }
 
+pub fn display_path(printable: &str,  buf: &mut String,  terminal_width: usize) {
+    let already_written = buf.chars().rev().take_while(|&c| c != '\n' ).count();
+    let max = match terminal_width.checked_sub(already_written) {
+        None | Some(0..=15) => !0, // too low, ignore limit
+        Some(remaining) => remaining,
+    };
+    let full_length = printable.chars().count();
+    if full_length <= max {
+        buf.push_str(printable);
+        return;
+    }
+
+    let start = buf.len();
+    buf.reserve(max);
+
+    // first check if abrreviating long components is enough
+    // aaa../bbb../ccc../ddd/eee.txt
+    let abbreviatable_part = match Path::new(printable).extension() {
+        Some(ext) => &printable[..printable.len()-1-ext.len()],
+        None => printable,
+    };
+    let abbreviate_away = abbreviatable_part.split(MAIN_SEPARATOR)
+            .map(|p| p.chars().count().saturating_sub(5) )
+            .sum::<usize>() as isize;
+    let must_hide = (full_length - max) as isize;
+    if abbreviate_away >= must_hide {
+        let mut to_abbreviate = must_hide;
+        let mut first = true;
+        for component in abbreviatable_part.split(MAIN_SEPARATOR) {
+            if !first {
+                buf.push(MAIN_SEPARATOR);
+            }
+            first = false;
+            if to_abbreviate <= 0 || component.len() < 6 {
+                buf.push_str(component);
+            } else {
+                let chars = component.chars().count() as isize;
+                if chars < 6 {
+                    buf.push_str(component);
+                } else {
+                    let abbreviate_now = min(chars-5, to_abbreviate);
+                    let show = (chars - abbreviate_now) as usize - 2;
+                    let show_bytes = match component.char_indices().nth(show as usize) {
+                        Some((pos, _)) => pos,
+                        None => component.len(), // should not happen
+                    };
+                    buf.push_str(&component[..show_bytes]);
+                    buf.push_str("..");
+                    to_abbreviate -= abbreviate_now;
+                }
+            }
+        }
+        // print the extension
+        buf.push_str(&printable[abbreviatable_part.len()..]);
+        if buf[start..].chars().count() > max {
+            panic!("Wrote more than {} available characters\nin ({}): {}\nout ({}): {}\n",
+                    max,
+                    printable.chars().count(),
+                    printable,
+                    buf[start..].chars().count(),
+                    &buf[start..],
+            );
+        }
+        return;
+    }
+
+    // put ... in the middle, but try to put it in front of a path delimiter
+    // aaaa/bbbb.../gggg/hhhh
+    let mut after_chars = max - max/2;
+    let mut first_dir_after_at = None;
+    let mut after_start = printable.char_indices()
+            .rev()
+            .inspect(|&(pos, c)| {
+                if c == MAIN_SEPARATOR {
+                    first_dir_after_at = Some(pos);
+                }
+             })
+            .nth(after_chars-1)
+            .unwrap().0;
+    if let Some(at) = first_dir_after_at {
+        after_chars += printable[after_start..at].chars().count();
+        after_start = at;
+    }
+
+    let before_chars = (max - after_chars) - 3;
+    let before_end = printable.char_indices().nth(before_chars).unwrap().0;
+    buf.push_str(&printable[..before_end]);
+    buf.push_str("...");
+    buf.push_str(&printable[after_start..]);
+    if buf[start..].chars().count() > max {
+        panic!("Wrote more than {} available characters\nin ({}): {}\nout ({}): {}\n",
+                max,
+                printable.chars().count(),
+                printable,
+                buf[start..].chars().count(),
+                &buf[start..],
+        );
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct PrintablePath {
     printable: String,
@@ -152,6 +253,14 @@ pub struct PrintablePath {
 }
 
 impl PrintablePath {
+    pub fn as_str(&self) -> &str {
+        &&self.printable
+    }
+
+    pub fn display_within(&self,  buf: &mut String,  terminal_width: usize) {
+        display_path(self.as_str(), buf, terminal_width)
+    }
+
     pub fn as_path(&self) -> &Path {
         match &self.original {
             Some(ref path) => path.as_path(),
