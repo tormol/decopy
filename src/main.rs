@@ -217,6 +217,8 @@ fn main() {
         if is_terminal {
             // go to beginning of line n up, and erase to end of screen
             write!(&mut display, "\u{1b}[{}F\u{1b}[0J", io_info.len()+hasher_info.len()+1).unwrap();
+        } else {
+            display.push('\n');
         }
         // print logs (these are not erased, and will be visible in scrollback)
         while let Ok(message) = log_messages.try_recv() {

@@ -13,6 +13,7 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::bytes::*;
 use crate::path_decoding::*;
 use crate::shared::*;
 use crate::thread_info::*;
@@ -52,12 +53,8 @@ fn hash_file(
         }
     }
 
-    if position == 0 {
-        println!("{} is empty", file_path);
-    } else {
-        let hash_result = hasher.finalize_reset();
-        println!("{} {} bytes {:#x}", file_path, position, hash_result);
-    }
+    let hash_result = hasher.finalize_reset();
+    thread_info.log_message(format!("{} {} {:#x}", file_path, Bytes(position), hash_result));
 }
 
 pub fn hash_files(shared: Arc<Shared>,  thread_info: &ThreadInfo) {
