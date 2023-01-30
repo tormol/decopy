@@ -23,6 +23,7 @@ extern crate term_size;
 extern crate thread_priority;
 
 mod path_decoding;
+mod time;
 mod thread_info;
 mod available_buffers;
 mod bytes;

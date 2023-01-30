@@ -84,7 +84,7 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
                     continue;
                 },
             };
-            ToRead::File(entry_path, modified, metadata.len())
+            ToRead::File(UnhashedFile { path: entry_path, modified, size: metadata.len(), })
         } else if file_type.is_dir() {
             ToRead::Directory(entry_path)
         } else {
@@ -100,27 +100,24 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
     }
 }
 
-fn read_file(
-        file_path: Arc<PrintablePath>,  size: u64,
-        shared: &Shared,  thread_info: &ThreadInfo,
-) {
+fn read_file(file_info: UnhashedFile,  shared: &Shared,  thread_info: &ThreadInfo) {
     thread_info.set_state(Opening);
-    thread_info.set_working_on(Some(file_path.clone()));
-    let mut file = match fs::File::open(file_path.as_path()) {
+    thread_info.set_working_on(Some(file_info.path.clone()));
+    let mut file = match fs::File::open(file_info.path.as_path()) {
         Ok(file) => file,
         Err(e) => {
-            thread_info.log_message(format!("Cannot open  {}: {}", file_path, e));
+            thread_info.log_message(format!("Cannot open  {}: {}", file_info.path, e));
             return;
         }
     };
 
-    let mut remaining_size = usize::try_from(size)
+    let mut remaining_size = usize::try_from(file_info.size)
             .unwrap_or(shared.buffers.max_single_buffer_size());
     let mut buffer = shared.buffers.get_buffer(remaining_size, thread_info);
 
     let (tx, rx) = mpsc::channel();
     // delay inserting until after first read
-    let mut insert = Some((file_path, rx));
+    let mut insert = Some((file_info, rx));
     let mut incomplete = true;
 
     while incomplete {
@@ -167,12 +164,7 @@ pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
             drop(lock);
 
             match to_read {
-                ToRead::File(path, _, size) => read_file(
-                        path,
-                        size.into(),
-                        &shared,
-                        thread_info,
-                ),
+                ToRead::File(file) => read_file(file, &shared, thread_info),
                 ToRead::Directory(path) => read_dir(path, &shared, thread_info),
             }
 

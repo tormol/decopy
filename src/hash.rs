@@ -14,7 +14,7 @@
  */
 
 use crate::bytes::*;
-use crate::path_decoding::*;
+use crate::time::*;
 use crate::shared::*;
 use crate::thread_info::*;
 
@@ -23,7 +23,7 @@ use std::sync::{Arc, mpsc};
 use sha2::{Sha256, Digest};
 
 fn hash_file(
-        file_path: Arc<PrintablePath>,  parts: mpsc::Receiver<FilePart>,
+        file: UnhashedFile,  parts: mpsc::Receiver<FilePart>,
         hasher: &mut sha2::Sha256,  thread_info: &ThreadInfo,
         buffers: &AvailableBuffers,
 ) {
@@ -34,7 +34,7 @@ fn hash_file(
             FilePart::Chunk{buffer, length} => {
                 if position == 0 {
                     thread_info.set_state(Hashing);
-                    thread_info.set_working_on(Some(file_path.clone()));
+                    thread_info.set_working_on(Some(file.path.clone()));
                 }
                 hasher.update(&buffer[..length]);
                 thread_info.add_bytes(length);
@@ -42,9 +42,10 @@ fn hash_file(
                 buffers.return_buffer(buffer);
             },
             FilePart::Error(e) => {
-                thread_info.log_message(format!("{} got IO error after {} bytes: {}",
-                        file_path,
+                thread_info.log_message(format!("{} got IO error after {} of {} bytes: {}",
+                        file.path,
                         position,
+                        file.size,
                         e
                 ));
                 hasher.reset();
@@ -54,7 +55,12 @@ fn hash_file(
     }
 
     let hash_result = hasher.finalize_reset();
-    thread_info.log_message(format!("{} {} {:#x}", file_path, Bytes(position), hash_result));
+    thread_info.log_message(format!("{} {:#} {} {:#x}",
+            file.path,
+            PrintableTime::from(file.modified),
+            Bytes(position),
+            hash_result,
+    ));
 }
 
 pub fn hash_files(shared: Arc<Shared>,  thread_info: &ThreadInfo) {

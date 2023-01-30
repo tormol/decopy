@@ -22,8 +22,15 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::SystemTime;
 
 #[derive(Clone, Debug)]
+pub struct UnhashedFile {
+    pub path: Arc<PrintablePath>,
+    pub modified: SystemTime,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug)]
 pub enum ToRead {
-    File(Arc<PrintablePath>, SystemTime, u64),
+    File(UnhashedFile),
     Directory(Arc<PrintablePath>),
 }
 
@@ -55,7 +62,7 @@ pub enum FilePart {
 }
 
 pub struct HashQueue {
-    pub queue: Vec<(Arc<PrintablePath>, mpsc::Receiver<FilePart>)>,
+    pub queue: Vec<(UnhashedFile, mpsc::Receiver<FilePart>)>,
     pub stop_now: bool,
     pub stop_when_empty: bool,
 }
