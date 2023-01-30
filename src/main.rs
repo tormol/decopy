@@ -125,7 +125,7 @@ fn main() {
             eprintln!("Cannot canoniicalize {}: {}", PrintablePath::from(dir_path), e);
             exit(1);
         });
-        to_read.queue.push((Arc::new(dir_path.into()), ReadType::Directory));
+        to_read.queue.push(ToRead::Directory(Arc::new(dir_path.into())));
     }
     drop(to_read);
 

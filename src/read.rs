@@ -17,7 +17,6 @@ use crate::shared::*;
 use crate::thread_info::*;
 
 use std::{fs, io::Read, process::exit};
-use std::num::NonZeroU64;
 use std::sync::{Arc, mpsc};
 
 fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &ThreadInfo) {
@@ -47,18 +46,47 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
                 continue;
             }
         };
-        let file_type = if file_type.is_file() {
-            let size = match entry.metadata() {
-                Ok(metadata) if metadata.len() == 0 => 1,
-                Ok(metadata) => metadata.len(),
+        let to_read = if file_type.is_file() {
+            let metadata = match entry.metadata() {
+                Ok(metadata) => metadata,
                 Err(e) => {
-                    thread_info.log_message(format!("Error getting metadata of {}: {}", entry_path, e));
+                    thread_info.log_message(format!("Error getting metadata of {}: {}",
+                            entry_path,
+                            e,
+                    ));
                     continue;
                 }
             };
-            ReadType::File(NonZeroU64::new(size).unwrap())
+            let modified = match (metadata.modified(), metadata.created()) {
+                (Ok(modified), Ok(created)) if modified >= created => modified,
+                (Ok(_), Ok(created)) => {
+                    thread_info.log_message(format!(
+                            "Creation time for for {} is newer than its modification time",
+                            entry_path,
+                    ));
+                    created
+                },
+                (Ok(modified), Err(_)) => modified,
+                (Err(e), Ok(created)) => {
+                    thread_info.log_message(format!(
+                            "Cannot get modification time for {}: {}, using creation time",
+                            entry_path,
+                            e,
+                    ));
+                    created
+                },
+                (Err(e), Err(_)) => {
+                    thread_info.log_message(format!(
+                            "Cannot get modification or creation time for {}: {}",
+                            entry_path,
+                            e,
+                    ));
+                    continue;
+                },
+            };
+            ToRead::File(entry_path, modified, metadata.len())
         } else if file_type.is_dir() {
-            ReadType::Directory
+            ToRead::Directory(entry_path)
         } else {
             let file_type = if file_type.is_symlink() {"symlink"} else {"special file"};
             thread_info.log_message(format!("{} is a {}, skipping.", entry_path, file_type));
@@ -66,7 +94,7 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
         };
 
         let mut lock = shared.to_read.lock().unwrap();
-        lock.queue.push((entry_path, file_type));
+        lock.queue.push(to_read);
         drop(lock);
         shared.reader_waker.notify_one();
     }
@@ -134,13 +162,18 @@ pub fn read_files(shared: Arc<Shared>, thread_info: &ThreadInfo) {
             thread_info.set_state(Quit);
             thread_info.set_working_on(None);
             break;
-        } else if let Some((path, ty)) = lock.queue.pop() {
+        } else if let Some(to_read) = lock.queue.pop() {
             lock.working += 1;
             drop(lock);
 
-            match ty {
-                ReadType::File(size) => read_file(path, size.into(), &shared, thread_info),
-                ReadType::Directory => read_dir(path, &shared, thread_info),
+            match to_read {
+                ToRead::File(path, _, size) => read_file(
+                        path,
+                        size.into(),
+                        &shared,
+                        thread_info,
+                ),
+                ToRead::Directory(path) => read_dir(path, &shared, thread_info),
             }
 
             lock = shared.to_read.lock().unwrap();

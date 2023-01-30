@@ -18,17 +18,17 @@ pub use crate::path_decoding::PrintablePath;
 
 use std::fmt::{self, Debug, Formatter};
 use std::io;
-use std::num::NonZeroU64;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::SystemTime;
 
-#[derive(Clone, Copy, Debug)]
-pub enum ReadType {
-    File(NonZeroU64),
-    Directory,
+#[derive(Clone, Debug)]
+pub enum ToRead {
+    File(Arc<PrintablePath>, SystemTime, u64),
+    Directory(Arc<PrintablePath>),
 }
 
 pub struct ReadQueue {
-    pub queue: Vec<(Arc<PrintablePath>, ReadType)>,
+    pub queue: Vec<ToRead>,
     pub stop_now: bool,
     pub working: u32,
 }
