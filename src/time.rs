@@ -15,7 +15,7 @@
 
 //! std::time cannot format, and this is not worth pulling in chrono for
 
-use std::fmt::{Display, Formatter, Result};
+use std::fmt::{Debug, Display, Formatter, Result};
 use std::time::SystemTime;
 
 /// Convert timestamp to datetime retured as [year, month, day, hour, minute, second].
@@ -65,7 +65,7 @@ fn timestamp_to_date(mut ts: i64) -> [i16; 6] {
     [year as i16, months as i16+1, days as i16+1, hour as i16, minute as i16, ts as i16]
 }
 
-#[derive(Clone,Copy, Default, Debug, PartialEq,Eq, PartialOrd,Ord)]
+#[derive(Clone,Copy, Default, PartialEq,Eq, PartialOrd,Ord)]
 pub struct PrintableTime {
     year: i16,
     month: u8,
@@ -75,13 +75,21 @@ pub struct PrintableTime {
     second: u8,
 }
 
+impl Debug for PrintableTime {
+    fn fmt(&self,  formatter: &mut Formatter) -> Result {
+        write!(formatter, "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                self.year, self.month, self.day,
+                self.hour, self.minute, self.second,
+        )
+    }
+}
+
 impl Display for PrintableTime {
     fn fmt(&self,  formatter: &mut Formatter) -> Result {
-        match write!(formatter, "{:04}-{:02}-{:02}", self.year, self.month, self.day) {
-            Ok(()) if !formatter.alternate() => {
-                write!(formatter, " {:02}:{:02}:{:02}", self.hour, self.minute, self.second)
-            },
-            result => result,
+        if formatter.alternate() {
+            write!(formatter, "{:04}-{:02}-{:02}", self.year, self.month, self.day)
+        } else {
+            Debug::fmt(self, formatter)
         }
     }
 }
