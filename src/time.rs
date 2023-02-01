@@ -22,7 +22,7 @@ use std::time::SystemTime;
 ///
 /// Copied from https://github.com/tormol/tiprotd/blob/master/clients/time32.rs
 /// and extended to 64-bit.  
-/// Might have bugs outside 1904-2038, especially before year 0.
+/// Should handle all dates between years ±32768.
 fn timestamp_to_date(mut ts: i64) -> [i16; 6] {
     // This was written for 32-bit
     let sign: i64 = if ts < 0 {-1} else {1};
@@ -97,5 +97,45 @@ impl From<SystemTime> for PrintableTime {
             year: parts[0] as i16,  month: parts[1] as u8,  day: parts[2] as u8,
             hour: parts[3] as u8,  minute: parts[4] as u8,  second: parts[5] as u8,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamp_decoding_i32() {
+        assert_eq!(timestamp_to_date(0), [1970, 1, 1, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(60*60*24-1), [1970, 1, 1, 23, 59, 59]);
+        assert_eq!(timestamp_to_date(60*60*24*(31+1)), [1970, 2, 2, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(31536000), [1971, 1, 1, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(39274217), [1971, 3, 31, 13, 30, 17]);
+        assert_eq!(timestamp_to_date(68214896), [1972, 2, 29, 12, 34, 56]);
+        assert_eq!(timestamp_to_date(119731017), [1973, 10, 17, 18, 36, 57]);
+        assert_eq!(timestamp_to_date(951854402), [2000, 2, 29, 20, 00, 02]);
+        assert_eq!(timestamp_to_date(1551441600), [2019, 3, 1, 12, 00, 00]);
+        assert_eq!(timestamp_to_date(2147483647), [2038, 1, 19, 3, 14, 7]);
+        assert_eq!(timestamp_to_date(-1), [1969, 12, 31, 23, 59, 59]);
+        assert_eq!(timestamp_to_date(-60*60*24), [1969, 12, 31, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(-60*60*24*365), [1969, 1, 1, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(-60*60*24*365-1), [1968, 12, 31, 23, 59, 59]);
+        assert_eq!(timestamp_to_date(-63154739), [1968, 1, 1, 1, 1, 1]);
+        assert_eq!(timestamp_to_date(-89679601), [1967, 2, 28, 0, 59, 59]);
+        assert_eq!(timestamp_to_date(-1834750129), [1911, 11, 11, 11, 11, 11]);
+        assert_eq!(timestamp_to_date(-2147483648), [1901, 12, 13, 20, 45, 52]);
+    }
+
+    #[test]
+    fn timestamp_decoding_i64() {
+        assert_eq!(timestamp_to_date(2210112000), [2040, 1, 14, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(4107542400), [2100, 3, 1, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(-62167219200), [0, 1, 1, 0, 0, 0]);
+        assert_eq!(timestamp_to_date(-62167219201), [-1, 12, 31, 23, 59, 59]);
+        assert_eq!(timestamp_to_date(-62167219201), [-1, 12, 31, 23, 59, 59]);
+        assert_eq!(timestamp_to_date(-65320000000), [-100, 2, 3, 11, 33, 20]);
+        assert_eq!(timestamp_to_date(-74790000000), [-400, 1, 1, 0, 0, 0]);
+
+        //assert_eq!(timestamp_to_date(2041622064000), [66666, 6, 6, 0, 0, 0]);
     }
 }
