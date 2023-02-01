@@ -38,7 +38,7 @@ fn hash_file(
                 }
                 hasher.update(&buffer[..length]);
                 thread_info.add_bytes(length);
-                position += length;
+                position += length as u64;
                 buffers.return_buffer(buffer);
             },
             FilePart::Error(e) => {

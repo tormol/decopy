@@ -13,7 +13,6 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::bytes::Bytes;
 use crate::path_decoding::PrintablePath;
 
 use std::fmt::{self, Debug, Formatter};
@@ -83,8 +82,8 @@ impl ThreadInfo {
         self.log_channel.lock().unwrap().send(message).unwrap()
     }
 
-    pub fn processed_bytes(&self) -> Bytes {
-        Bytes(self.processed_bytes.load(Ordering::Relaxed))
+    pub fn processed_bytes(&self) -> usize {
+        self.processed_bytes.load(Ordering::Relaxed)
     }
     pub fn add_bytes(&self,  bytes: usize) {
         self.processed_bytes.fetch_add(bytes, Ordering::Relaxed);

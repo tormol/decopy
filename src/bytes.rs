@@ -18,28 +18,48 @@ use std::num::IntErrorKind::*;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
+/// A type to display and parse numbers with 1024-based B/KB/.../EB units.
+///
+/// It takes a `u64` to be able to display file sizes.  
+/// For memory sizes, it has methods to easily convert to and from `usize`.
+/// (When parsing a memory size, you probably want to impose a lower limit
+/// than `usize::MAX` anyway.)
+///
+/// The `Display` impl uses uppercase letters, with no space after the number
+/// or i before the B.
+/// The parsing is more liberal about the letters: it accepts lowercase i
+/// after prefixes (Ki/Mi/Gi/...), and lowercase letters as long as both the b
+/// and any prefix is lowercase. (But lowercase k is always accepted).
 #[derive(Clone,Copy, Default, Debug, PartialEq,Eq, Hash, PartialOrd,Ord)]
-pub struct Bytes(pub usize);
+#[repr(transparent)]
+pub struct Bytes(pub u64);
 
-impl From<usize> for Bytes {
-    fn from(bytes: usize) -> Bytes {
+impl From<u64> for Bytes {
+    fn from(bytes: u64) -> Bytes {
         Bytes(bytes)
     }
 }
-impl From<Bytes> for usize {
-    fn from(bytes: Bytes) -> usize {
+impl From<Bytes> for u64 {
+    fn from(bytes: Bytes) -> u64 {
         bytes.0
     }
 }
 
+impl From<usize> for Bytes {
+    fn from(bytes: usize) -> Bytes {
+        assert!(std::mem::size_of::<usize>() <= 8, "Unsupported architecture");
+        Bytes(bytes as u64)
+    }
+}
+
 impl Deref for Bytes {
-    type Target = usize;
-    fn deref(&self) -> &usize {
+    type Target = u64;
+    fn deref(&self) -> &u64 {
         &self.0
     }
 }
 impl DerefMut for Bytes {
-    fn deref_mut(&mut self) -> &mut usize {
+    fn deref_mut(&mut self) -> &mut u64 {
         &mut self.0
     }
 }
@@ -54,9 +74,16 @@ pub struct WithSymbol {
 }
 
 impl Bytes {
-    pub const PREFIX_SYMBOLS: [u8; 11] = *b" KMGTPEZYRQ";
-    pub const fn new(bytes: usize) -> Self {
+    // The bigger sizes, Z,Y,R,Q, are outside the range of `u64`.
+    const PREFIX_SYMBOLS: [u8; 7] = *b" KMGTPE";
+    pub const fn new(bytes: u64) -> Self {
         Bytes(bytes)
+    }
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+    pub const fn to_usize_saturating(self) -> usize {
+        if self.0 <= usize::MAX as u64 {self.0 as usize} else {usize::MAX}
     }
     pub fn with_symbol(self) -> WithSymbol {
         let mut whole = self.0;
@@ -72,7 +99,6 @@ impl Bytes {
         }
     }
     pub fn rounded_with_fraction(self) -> WithSymbol {
-        const UNITS: [u8; 11] = *b" KMGTPEZYRQ";
         let mut whole = self.0;
         let mut fraction = 0;
         let mut symbol = 0;
@@ -81,7 +107,7 @@ impl Bytes {
             fraction = whole & 1023;
             whole >>= 10;
         }
-        let symbol = UNITS[symbol];
+        let symbol = Bytes::PREFIX_SYMBOLS[symbol];
         let mut msf = fraction / 100;
         if fraction % 100 >= 50 {
             msf += 1;
@@ -129,7 +155,7 @@ impl FromStr for Bytes {
         if digits == 0 {
             return Err("missing number");
         }
-        let number = match usize::from_str(&s[..digits]) {
+        let number = match u64::from_str(&s[..digits]) {
             Ok(number) => number,
             Err(ref e) if e.kind() == &PosOverflow => return Err("overflow"),
             Err(e) => unreachable!("number parsing should only fail with overflow, not {}", e),

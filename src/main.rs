@@ -111,8 +111,8 @@ fn main() {
     );
 
     let buffers = AvailableBuffers::new(
-            args.max_buffers_memory.into(),
-            args.max_buffer_size.into(),
+            args.max_buffers_memory.to_usize_saturating(),
+            args.max_buffer_size.to_usize_saturating(),
     ).unwrap_or_else(|e| {
         eprintln!("{}", e);
         exit(2);
@@ -199,14 +199,14 @@ fn main() {
         let mut read = 0;
         for (info, (_, prev_read)) in io_info.iter().zip(&mut io_threads) {
             let current = info.processed_bytes();
-            read += current.0 - *prev_read;
-            *prev_read = current.0;
+            read += (current - *prev_read) as u64;
+            *prev_read = current;
         }
         let mut hashed = 0;
         for (info, (_, prev_hashed)) in hasher_info.iter().zip(&mut hasher_threads) {
             let current = info.processed_bytes();
-            hashed += current.0 - *prev_hashed;
-            *prev_hashed = current.0;
+            hashed += (current - *prev_hashed) as u64;
+            *prev_hashed = current;
         }
 
         // print logs (these are not erased, and will be visible in scrollback)
@@ -230,14 +230,14 @@ fn main() {
         }
 
         if is_terminal || now >= prev + interval {
-            read = read*(now-prev).as_micros() as usize/1_000_000;
-            hashed = hashed*(now-prev).as_micros() as usize/1_000_000;
+            read = read*(now-prev).as_micros() as u64/1_000_000;
+            hashed = hashed*(now-prev).as_micros() as u64/1_000_000;
             prev = now;
             writeln!(&mut display,
                     "reading {:#}/s, hashing {:#}/s, buffer memory allocated: {:#}",
                     Bytes::new(read),
                     Bytes::new(hashed),
-                    Bytes::new(shared.buffers.current_buffers_size()),
+                    Bytes::from(shared.buffers.current_buffers_size()),
             ).unwrap();
         }
 
