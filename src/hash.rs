@@ -57,7 +57,7 @@ fn hash_file(
     let hash_result = hasher.finalize_reset();
     thread_info.log_message(format!("{} {:#} {} {:#x}",
             file.path,
-            PrintableTime::from(file.modified),
+            PrintableTime::from(file.modified).clamp_to_yyyy(),
             Bytes(position),
             hash_result,
     ));

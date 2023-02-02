@@ -19,53 +19,18 @@ use std::fmt::{Debug, Display, Formatter, Result};
 use std::num::NonZeroU8;
 use std::time::SystemTime;
 
-/// Convert timestamp to datetime retured as (year, month, day, hour, minute, second).
+/// A type to display a `SystemTime` in a human-readable way.
 ///
-/// Copied from https://github.com/tormol/tiprotd/blob/master/clients/time32.rs
-/// and extended to 64-bit.  
-/// Should handle all dates between years ±32768.
-fn timestamp_to_date(mut ts: i64) -> (i16, u8, u8, u8, u8, u8) {
-    // This was written for 32-bit
-    let sign: i64 = if ts < 0 {-1} else {1};
-    let mut days = ts / (60*60*24);
-    ts %= 60*60*24;
-    let mut year: i64 = 1970;
-    fn isleap(year: i64) -> bool {year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)}
-    fn daysinyear(year: i64) -> i64 {if isleap(year) {366} else {365}}
-    if sign >= 0 {
-        while days >= daysinyear(year) {
-            days -= daysinyear(year);
-            year += 1;
-        }
-    } else {// pre 1970
-        if ts != 0 {// not 00:00:00
-            ts += 60*60*24;
-            days -= 1;
-        }
-        loop {
-            year -= 1;
-            days += daysinyear(year);
-            if days >= 0 {
-                break;
-            }
-        }
-    }
-    // println!("year: {}, is leap year: {}, day of year: {}, second of day: {}", year, isleap(year), days, ts);
-    let feb = if isleap(year) {29} else {28};
-    let days_in_month = [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut months = 0;
-    while days >= days_in_month[months] {
-        days -= days_in_month[months];
-        months += 1;
-    }
-
-    let hour = ts / (60*60);
-    ts %= 60*60;
-    let minute = ts / 60;
-    ts %= 60;
-    (year as i16, months as u8 + 1, days as u8 + 1, hour as u8, minute as u8, ts as u8)
-}
-
+/// The `Display` and `Debug` impls displays it on the form yyyy-mm-dd HH:MM:SS.
+/// If alternate display formatting is enabled, only the date is displayed.
+/// With debug formatting, this alternate mode is not supported.
+///
+/// # Limitiations
+///
+/// * Lacks sub-second precision.
+///   The sub-second part of a `SystemTime` is ignored.
+/// * Can only display dates between years ±32768.
+///   Dates outside that range are will be clamped to the max and min value.
 #[derive(Clone,Copy, PartialEq,Eq, PartialOrd,Ord)]
 pub struct PrintableTime {
     year: i16,
@@ -74,6 +39,136 @@ pub struct PrintableTime {
     hour: u8,
     minute: u8,
     second: u8,
+}
+
+// common conversion and validation functions
+const fn is_leap(year: i64) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+const fn days_in_months(year: i64) -> [u8; 12] {
+    let feb = if is_leap(year) {29} else {28};
+    [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+}
+
+/// Because unwrap() can't be used in `const fn` yet.
+const fn to_nonzero(n: u8) -> NonZeroU8 {
+    match NonZeroU8::new(n) {
+        Some(n) => n,
+        None => unreachable!(),
+    }
+}
+
+impl PrintableTime {
+    pub const MAX: Self = Self::new([i16::MAX, 12, 31, 23, 59, 59]);
+    pub const MIN: Self = Self::new([i16::MIN, 1, 1, 0, 0, 0]);
+
+    /// Create a datetime from [year, month, day, hour, minute, second].
+    ///
+    /// # Panics
+    ///
+    /// If any field is outside their valid range, such as month: 0 or hour: 24.
+    pub const fn new([year, month, day, hour, minute, second]: [i16; 6]) -> PrintableTime {
+        if month < 1 || month > 12 {
+            panic!("month is outside the range 1..=12");
+        } else if day < 1 || day > days_in_months(year as i64)[month as usize-1] as i16 {
+            panic!("day is outside the range for the given month and year");
+        } else if hour < 0 || hour > 23 {
+            panic!("hour is outside the range 0..=23");
+        } else if minute < 0 || minute > 59 || second < 0 || second > 59 {
+            panic!("minute or second is outside the range 0..=59");
+        } else {
+            PrintableTime {
+                year,
+                month: to_nonzero(month as u8),
+                day: to_nonzero(day as u8),
+                hour: hour as u8,
+                minute: minute as u8,
+                second: second as u8,
+            }
+        }
+    }
+
+    /// Convert timestamp to datetime.
+    ///
+    /// Should handle all dates between years ±32768.
+    /// Dates outside that range are clamped to the nearest representable value:
+    /// Either `PrintableTime::MAX` or `PrintableTime::MIN`.
+    pub const fn from_timestamp(mut timestamp: i64) -> PrintableTime {
+        // Adapted from https://github.com/tormol/tiprotd/blob/master/clients/time32.rs
+        let sign: i64 = if timestamp < 0 {-1} else {1};
+        let mut days = timestamp / (60*60*24);
+        timestamp %= 60*60*24;
+        let mut year: i64 = 1970;
+        const fn days_in_year(year: i64) -> i64 {if is_leap(year) {366} else {365}}
+        if sign >= 0 {
+            while days >= days_in_year(year) {
+                days -= days_in_year(year);
+                year += 1;
+            }
+        } else {// pre 1970
+            if timestamp != 0 {// not 00:00:00
+                timestamp += 60*60*24;
+                days -= 1;
+            }
+            loop {
+                year -= 1;
+                days += days_in_year(year);
+                if days >= 0 {
+                    break;
+                }
+            }
+        }
+        let days_in_month = days_in_months(year);
+        let mut months = 0;
+        while days >= days_in_month[months] as i64 {
+            days -= days_in_month[months] as i64;
+            months += 1;
+        }
+
+        let hour = timestamp / (60*60);
+        timestamp %= 60*60;
+        let minute = timestamp / 60;
+        timestamp %= 60;
+
+        if year > i16::MAX as i64 {
+            PrintableTime::MAX
+        } else if year < i16::MIN as i64 {
+            PrintableTime::MIN
+        } else {
+            PrintableTime {
+                year: year as i16,
+                month: to_nonzero(months as u8 + 1),
+                day: to_nonzero(days as u8 + 1),
+                hour: hour as u8,
+                minute: minute as u8,
+                second: timestamp as u8,
+            }
+        }
+    }
+
+    /// Clamp the datetime to be between year 0 and year 9999
+    pub const fn clamp_to_yyyy(self) -> Self {
+        match self.year {
+            0..=9999 => self,
+            i16::MIN..=-1 => PrintableTime::new([0, 1, 1, 0, 0, 0]),
+            10000..=i16::MAX => PrintableTime::new([9999, 12, 31, 23, 59, 59]),
+        }
+    }
+
+    /// Return the datetime as (year, month, day, hour, minute, second).
+    #[cfg_attr(not(test), allow(unused))]
+    pub const fn to_tuple(self) -> (i16, u8, u8, u8, u8, u8) {
+        (self.year, self.month.get(), self.day.get(), self.hour, self.minute, self.second)
+    }
+    /// Return the datetime as [year, month, day, hour, minute, second].
+    #[allow(unused)]
+    pub const fn to_array(self) -> [i16; 6] {
+        [
+                self.year,  self.month.get() as i16,  self.day.get() as i16,
+                self.hour as i16,  self.minute as i16,  self.second as i16,
+        ]
+    }
 }
 
 impl Debug for PrintableTime {
@@ -110,18 +205,17 @@ impl Default for PrintableTime {
 
 impl From<SystemTime> for PrintableTime {
     fn from(time: SystemTime) -> PrintableTime {
-        let ts = match time.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(duration) => duration.as_secs() as i64,
-            Err(negative) => -(negative.duration().as_secs() as i64),
-        };
-        let parts = timestamp_to_date(ts);
-        PrintableTime {
-            year: parts.0,
-            month: NonZeroU8::new(parts.1).unwrap(),
-            day: NonZeroU8::new(parts.2).unwrap(),
-            hour: parts.3,
-            minute: parts.4,
-            second: parts.5,
+        match time.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(duration) => match i64::try_from(duration.as_secs()) {
+                Ok(timestamp) => Self::from_timestamp(timestamp),
+                Err(_) => Self::MAX,
+            },
+            Err(negative) => match i64::try_from(negative.duration().as_secs()) {
+                // i64::MIN as u64 does not need to go to the Ok branch,
+                // becase it would be clamped to Self::MIN there too.
+                Ok(timestamp) => Self::from_timestamp(-timestamp),
+                Err(_) => Self::MIN,
+            },
         }
     }
 }
@@ -129,6 +223,10 @@ impl From<SystemTime> for PrintableTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const fn timestamp_to_date(timestamp: i64) -> (i16, u8, u8, u8, u8, u8) {
+        PrintableTime::from_timestamp(timestamp).to_tuple()
+    }
 
     #[test]
     fn timestamp_decoding_i32() {
@@ -162,7 +260,8 @@ mod tests {
         assert_eq!(timestamp_to_date(-65320000000), (-100, 2, 3, 11, 33, 20));
         assert_eq!(timestamp_to_date(-74790000000), (-400, 1, 1, 0, 0, 0));
 
-        //assert_eq!(timestamp_to_date(2041622064000), (66666, 6, 6, 0, 0, 0));
+        assert_eq!(timestamp_to_date(2041622064000), (i16::MAX, 12, 31, 23, 59, 59));
+        assert_eq!(timestamp_to_date(-2041622064000), (i16::MIN, 1, 1, 0, 0, 0));
     }
 
     #[test]
@@ -171,5 +270,21 @@ mod tests {
         assert_eq!(format!("{}", PrintableTime::default()), "1970-01-01 00:00:00");
         assert_eq!(format!("{:?}", PrintableTime::default()), "1970-01-01 00:00:00");
         assert_eq!(format!("{:#}", PrintableTime::default()), "1970-01-01");
+    }
+
+    #[test]
+    fn clamp_to_4_digit_year() {
+        assert_eq!(
+                PrintableTime::new([-10, 5, 5, 9, 9, 9]).clamp_to_yyyy(),
+                PrintableTime::new([0, 1, 1, 0, 0, 0]),
+        );
+        assert_eq!(
+                PrintableTime::new([30000, 9, 9, 21, 21, 21]).clamp_to_yyyy(),
+                PrintableTime::new([9999, 12, 31, 23, 59, 59]),
+        );
+        assert_eq!(
+                PrintableTime::new([0, 10, 10, 12, 12, 12]).clamp_to_yyyy(),
+                PrintableTime::new([0, 10, 10, 12, 12, 12]),
+        );
     }
 }
