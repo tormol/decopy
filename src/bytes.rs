@@ -30,6 +30,10 @@ use std::str::FromStr;
 /// The parsing is more liberal about the letters: it accepts lowercase i
 /// after prefixes (Ki/Mi/Gi/...), and lowercase letters as long as both the b
 /// and any prefix is lowercase. (But lowercase k is always accepted).
+///
+/// # Examples
+///
+/// See tests in the source file. (doc-tests doesn't work in executables yet.)
 #[derive(Clone,Copy, Default, Debug, PartialEq,Eq, Hash, PartialOrd,Ord)]
 #[repr(transparent)]
 pub struct Bytes(pub u64);
@@ -175,5 +179,74 @@ impl FromStr for Bytes {
             return Err("overflow");
         }
         Ok(Bytes(number << shift))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_from_str() {
+        assert_eq!(Bytes::from_str("0"), Ok(Bytes(0)));
+        assert_eq!(Bytes::from_str("0B"), Ok(Bytes(0)));
+        assert_eq!(Bytes::from_str("0b"), Ok(Bytes(0)));
+        assert_eq!(Bytes::from_str("0PB"), Ok(Bytes(0)));
+
+        Bytes::from_str("").unwrap_err();
+        Bytes::from_str("B").unwrap_err();
+        Bytes::from_str("b").unwrap_err();
+        Bytes::from_str("0 ").unwrap_err();
+        Bytes::from_str("0B ").unwrap_err();
+        Bytes::from_str("0 B").unwrap_err();
+        Bytes::from_str("0 b").unwrap_err();
+        Bytes::from_str("00").unwrap_err();
+        Bytes::from_str("0bb").unwrap_err();
+        Bytes::from_str("0MMB").unwrap_err();
+    }
+
+    #[test]
+    fn from_str() {
+        assert_eq!(Bytes::from_str("1KB"), Ok(Bytes(1024)));
+        assert_eq!(Bytes::from_str("2kb"), Ok(Bytes(2048)));
+        assert_eq!(Bytes::from_str("3kB"), Ok(Bytes(3072)));
+        assert_eq!(Bytes::from_str("4KiB"), Ok(Bytes(4096)));
+        assert_eq!(Bytes::from_str("4096B"), Ok(Bytes(4096)));
+        assert_eq!(Bytes::from_str("1tib"), Ok(Bytes(1024*1024*1024*1024)));
+
+        Bytes::from_str("1").unwrap_err();
+        Bytes::from_str("AB").unwrap_err();
+        Bytes::from_str("dB").unwrap_err();
+
+        Bytes::from_str("16EB").unwrap_err();
+        Bytes::from_str("2QB").unwrap_err();
+    }
+
+    #[test]
+    fn to_string() {
+        assert_eq!(Bytes(0).to_string(), "0B");
+        assert_eq!(Bytes(1023).to_string(), "1023B");
+        assert_eq!(Bytes(1024).to_string(), "1KB");
+        assert_eq!(Bytes(12345).to_string(), "12KB");
+        assert_eq!(Bytes(128<<20).to_string(), "128MB");
+        assert_eq!(Bytes(512*1024-1).to_string(), "511KB");
+        assert_eq!(Bytes(u16::MAX as u64).to_string(), "63KB");
+        assert_eq!(Bytes(u16::MAX as u64+1).to_string(), "64KB");
+        assert_eq!(Bytes(u32::MAX as u64).to_string(), "3GB");
+        assert_eq!(Bytes(u32::MAX as u64+1).to_string(), "4GB");
+        assert_eq!(Bytes(u64::MAX).to_string(), "15EB");
+    }
+
+    #[test]
+    fn from_usize() {
+        assert_eq!(Bytes::from(77usize), Bytes(77));
+        assert_eq!(Bytes::from(usize::MAX), Bytes(usize::MAX as u64));
+    }
+
+    #[test]
+    fn to_usize() {
+        assert_eq!(Bytes(isize::MAX as u64+10).to_usize_saturating(), isize::MAX as usize+10);
+        assert_eq!(Bytes(usize::MAX as u64).to_usize_saturating(), usize::MAX);
+        assert_eq!(Bytes((usize::MAX as u64).saturating_add(1)).to_usize_saturating(), usize::MAX);
     }
 }
