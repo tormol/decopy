@@ -13,7 +13,7 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::fmt::{self, Display, Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter, Result as fmtResult};
 use std::num::IntErrorKind::*;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
@@ -25,8 +25,14 @@ use std::str::FromStr;
 /// (When parsing a memory size, you probably want to impose a lower limit
 /// than `usize::MAX` anyway.)
 ///
-/// The `Display` impl uses uppercase letters, with no space after the number
-/// or i before the B.
+/// The `Debug` impl prints the number plus an uppercase B.
+///
+/// The `Display` impl finds the nearest power of 1024, and divides the value
+/// by that number and displays it with the appropriate unit.
+/// The fraction is discarded.
+/// Values are never rounded up: 1023 will be displayed as 1023B, not 1KB.
+/// It uses uppercase letters, with no space after the number or i before the B.
+///
 /// The parsing is more liberal, and accepts both the spaces and i,
 /// as well as lowercase letters as long as all retters are lowercase.
 /// (kB and kiB are also allowed.)
@@ -34,7 +40,7 @@ use std::str::FromStr;
 /// # Examples
 ///
 /// See tests in the source file. (doc-tests doesn't work in executables yet.)
-#[derive(Clone,Copy, Default, Debug, PartialEq,Eq, Hash, PartialOrd,Ord)]
+#[derive(Clone,Copy, Default, PartialEq,Eq, Hash, PartialOrd,Ord)]
 #[repr(transparent)]
 pub struct Bytes(pub u64);
 
@@ -129,7 +135,7 @@ impl Bytes {
 }
 
 impl Display for Bytes {
-    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmtResult {
         if self.0 < 1024 {
             write!(fmtr, "{}B", self.0)
         } else if fmtr.alternate() {
@@ -139,6 +145,12 @@ impl Display for Bytes {
             let WithSymbol{ whole, symbol, .. } = self.with_symbol();
             write!(fmtr, "{}{}B", whole, symbol as char)
         }
+    }
+}
+
+impl Debug for Bytes {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmtResult {
+        write!(fmtr, "{}B", self.0)
     }
 }
 
@@ -238,6 +250,13 @@ mod tests {
         assert_eq!(Bytes(u32::MAX as u64).to_string(), "3GB");
         assert_eq!(Bytes(u32::MAX as u64+1).to_string(), "4GB");
         assert_eq!(Bytes(u64::MAX).to_string(), "15EB");
+    }
+
+    #[test]
+    fn debug() {
+        assert_eq!(format!("{:?}", Bytes::default()), "0B");
+        assert_eq!(format!("{:?}", Bytes(1)), "1B");
+        assert_eq!(format!("{:?}", Bytes(8192)), "8192B");
     }
 
     #[test]
