@@ -27,9 +27,9 @@ use std::str::FromStr;
 ///
 /// The `Display` impl uses uppercase letters, with no space after the number
 /// or i before the B.
-/// The parsing is more liberal about the letters: it accepts lowercase i
-/// after prefixes (Ki/Mi/Gi/...), and lowercase letters as long as both the b
-/// and any prefix is lowercase. (But lowercase k is always accepted).
+/// The parsing is more liberal, and accepts both the spaces and i,
+/// as well as lowercase letters as long as all retters are lowercase.
+/// (kB and kiB are also allowed.)
 ///
 /// # Examples
 ///
@@ -164,6 +164,9 @@ impl FromStr for Bytes {
             Err(ref e) if e.kind() == &PosOverflow => return Err("overflow"),
             Err(e) => unreachable!("number parsing should only fail with overflow, not {}", e),
         };
+        while let Some(b' ') = s.as_bytes().get(digits) {
+            digits += 1;
+        }
         let shift = match &s[digits..] {
             "B" | "b" => 0,
             "K" | "k" | "KB" | "kB" | "kb" | "KiB" | "kib" | "kiB" => 10,
@@ -191,6 +194,8 @@ mod tests {
         assert_eq!(Bytes::from_str("0"), Ok(Bytes(0)));
         assert_eq!(Bytes::from_str("0B"), Ok(Bytes(0)));
         assert_eq!(Bytes::from_str("0b"), Ok(Bytes(0)));
+        assert_eq!(Bytes::from_str("0 B"), Ok(Bytes(0)));
+        assert_eq!(Bytes::from_str("0 b"), Ok(Bytes(0)));
         assert_eq!(Bytes::from_str("0PB"), Ok(Bytes(0)));
 
         Bytes::from_str("").unwrap_err();
@@ -198,8 +203,6 @@ mod tests {
         Bytes::from_str("b").unwrap_err();
         Bytes::from_str("0 ").unwrap_err();
         Bytes::from_str("0B ").unwrap_err();
-        Bytes::from_str("0 B").unwrap_err();
-        Bytes::from_str("0 b").unwrap_err();
         Bytes::from_str("00").unwrap_err();
         Bytes::from_str("0bb").unwrap_err();
         Bytes::from_str("0MMB").unwrap_err();
