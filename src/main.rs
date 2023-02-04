@@ -139,8 +139,9 @@ fn main() {
             eprintln!("Cannot canoniicalize {}: {}", PrintablePath::from(dir_path), e);
             exit(1);
         });
-        storage.get_previously_read(&dir_path, &mut shared.previously_read);
-        to_read.queue.push(ToRead::Directory(Arc::new(dir_path.into())));
+        let printable = PrintablePath::from(dir_path);
+        storage.get_previously_read(&printable, &mut shared.previously_read);
+        to_read.queue.push(ToRead::Directory(Arc::new(printable)));
     }
     drop(to_read);
     let shared = Arc::new(shared);

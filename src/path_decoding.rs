@@ -261,7 +261,7 @@ impl PrintablePath {
 
     /// Get the original path as bytes.
     ///
-    /// Will fail for non-UTF-8 paths on Windows, but on UNIX or WASI.
+    /// Will fail for non-UTF-8 paths on Windows, but not on UNIX or WASI.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         if let Some(ref original) = &self.original {
             #[cfg(any(unix, target_os="wasi"))]

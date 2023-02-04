@@ -95,15 +95,32 @@ impl Sqlite {
     }
 
     pub fn get_previously_read(&mut self,
-            absolute_path: &Path,
+            absolute_path: &PrintablePath,
             preivously_read: &mut PreviouslyRead,
     ) {
-        let absolute_path = PrintablePath::from(absolute_path);
-        // FIXME the glob might be vulnerable to injection
-        let mut stmt = self.connection.prepare(
-                "SELECT path, modified, apparent_size FROM hashed WHERE path GLOB ?1 || '*'"
+        // LIKE and BLOB appear not to work for BLOB,
+        // and are probably vulnerable to injection anyway.
+        // Therefore BETWEEN must be used,
+        // which requires finding the next path after all sub-paths of the prefix.
+        let Some(start) = absolute_path.as_bytes() else {
+            let _ = self.messages.send("cache is ignored for non-UTF8 paths on Windows".to_string());
+            return;
+        };
+        let mut after = Vec::from(start);
+        for i in (0..after.len()).rev() {
+            if after[i] == 255 {
+                after.pop();
+            } else {
+                after[i] += 1;
+                break;
+            }
+        }
+
+        let mut stmt = self.connection.prepare("
+                SELECT path, modified, apparent_size
+                FROM hashed WHERE path BETWEEN ?1 AND ?2"
         ).expect("create SELECT statement");
-        let files = stmt.query_map(params!(absolute_path.as_bytes()), |row | {
+        let files = stmt.query_map((start, after), |row | {
             let path: Vec<u8> = row.get(0).expect("get path collumn");
             let path = Arc::new(PrintablePath::try_from(path).unwrap());
             let modified = row.get::<_, String>(1)
@@ -117,7 +134,8 @@ impl Sqlite {
             })
         }).expect("get previously hashed files under root");
         for file in files {
-            preivously_read.insert(file.expect("get mapped row"));
+            let file = file.expect("get mapped row");
+            preivously_read.insert(file);
         }
     }
 
