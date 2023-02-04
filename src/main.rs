@@ -85,6 +85,8 @@ impl FromStr for Rate {
 #[derive(Parser, Debug)]
 #[command(arg_required_else_help=true, author, version, about, long_about=None)]
 struct Args {
+    #[arg(short, long)]
+    database: Option<PathBuf>,
     #[arg(short, long, value_name="NUMBER_OF_IO_THREADS", default_value_t=NonZeroU16::new(2).unwrap())]
     io_threads: NonZeroU16,
     #[arg(short='t', long, value_name="NUBMER_OF_HASHER_THREADS", default_value_t=NonZeroU16::new(4).unwrap())]
@@ -124,7 +126,10 @@ fn main() {
 
     let (complete_tx, complete_rx) = mpsc::channel::<HashedFile>();
     let shared = Shared::new(buffers, complete_tx);
-    let mut storage = Sqlite::new(complete_rx);
+    let mut storage = match args.database {
+        Some(ref path) => Sqlite::open(&path, complete_rx),
+        None => Sqlite::new_in_memory(complete_rx),
+    };
 
     // check root directories and add them to queue
     let mut to_read = shared.to_read.lock().unwrap();

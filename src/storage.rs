@@ -15,6 +15,8 @@
 
 use crate::shared::*;
 
+use std::mem::ManuallyDrop;
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -22,16 +24,38 @@ use rusqlite::{Connection, Statement};
 
 #[derive(Debug)]
 pub struct Sqlite {
-    connection: Connection,
+    connection: ManuallyDrop<Connection>,
     hashed_rx: mpsc::Receiver<HashedFile>,
 }
 
+impl Drop for Sqlite {
+    fn drop(&mut self) {
+        let connection = unsafe { ManuallyDrop::take(&mut self.connection) };
+        connection.close().expect("closing database");
+    }
+}
+
 impl Sqlite {
-    /// Open the database read-write, or exit on failure
-    pub fn new(hashed_rx: mpsc::Receiver<HashedFile>) -> Self {
-        let connection = Connection::open_in_memory()
+    /// Open the database read-write, or exit on failure.
+    pub fn open(path: &Path,  hashed_rx: mpsc::Receiver<HashedFile>) -> Self {
+        let connection = Connection::open(path)
                 .expect("open database");
-        connection.execute(
+        let db = Self { connection: ManuallyDrop::new(connection),  hashed_rx };
+        db.prepare();
+        return db;
+    }
+
+    /// Open the database read-write, or exit on failure.
+    pub fn new_in_memory(hashed_rx: mpsc::Receiver<HashedFile>) -> Self {
+        let connection = Connection::open_in_memory()
+                .expect("create in-memory database");
+        let db = Self { connection: ManuallyDrop::new(connection),  hashed_rx };
+        db.prepare();
+        return db;
+    }
+
+    fn prepare(&self) {
+        self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS hashed (
                     path BLOB PRIMARY KEY NOT NULL,
                     printable_path TEXT NOT NULL,
@@ -42,7 +66,6 @@ impl Sqlite {
                 )",
                 (), // empty list of parameters.
         ).expect("create table");
-        Self { connection, hashed_rx }
     }
 
     pub fn save_hashed(&mut self,  insert_interval: Duration) {

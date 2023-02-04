@@ -2,7 +2,7 @@
 
 ## WIP
 
-Only the scanning / reading part has been started on, and it's still incomplete.
+The scanning / reading part works, but using it has barely been started on.
 
 ## Goals
 
