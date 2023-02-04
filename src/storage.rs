@@ -58,21 +58,33 @@ impl Sqlite {
         self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS hashed (
                     path BLOB PRIMARY KEY NOT NULL,
-                    printable_path TEXT NOT NULL,
-                    modified TEXT NOT NULL,
-                    apparent_size INTEGER NOT NULL,
-                    read_size INTEGER NOT NULL,
-                    hash BLOB NOT NULL
-                )",
-                (), // empty list of parameters.
+                    printable_version TEXT,
+                    printable_path TEXT NOT NULL GENERATED ALWAYS
+                        AS (ifnull(printable_version, path)) VIRTUAL,
+                    modified TEXT NOT NULL CHECK(length(modified)=19),
+                    apparent_size UNSIGNED INTEGER NOT NULL,
+                    read_size UNSIGNED INTEGER NOT NULL,
+                    hash BLOB NOT NULL CHECK(length(hash)=32),
+                    hash_hex TEXT NOT NULL GENERATED ALWAYS
+                        AS (hex(hash)) VIRTUAL
+                ) WITHOUT ROWID", // should be faster as long as path is printable and not too long
+                (), // empty list of parameters
         ).expect("create table");
+        self.connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS hashed_path ON hashed (path ASC)",
+                (),
+        ).expect("create path index");
+        self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS hashed_hash ON hashed (hash)",
+                (),
+        ).expect("create hash index");
     }
 
     pub fn save_hashed(&mut self,  insert_interval: Duration) {
         fn insert_hashed(statement: &mut Statement,  insert: HashedFile) {
             statement.insert(params!(
                     insert.path.as_bytes(),
-                    insert.path.as_str(),
+                    if insert.path.is_printable() {None} else {Some(insert.path.as_str())},
                     insert.modified.to_string(),
                     insert.apparent_size,
                     insert.read_size,
@@ -83,7 +95,7 @@ impl Sqlite {
             let oldest = Instant::now();
             let transaction = self.connection.transaction().expect("start transaction");
             let mut statement = transaction.prepare("INSERT OR REPLACE
-                    INTO hashed (path, printable_path, modified, apparent_size, read_size, hash)
+                    INTO hashed (path, printable_version, modified, apparent_size, read_size, hash)
                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
             ).expect("create INSERT OR REPLACE statement");
             insert_hashed(&mut statement, file);

@@ -284,6 +284,11 @@ impl PrintablePath {
         }
     }
 
+    /// Whether the printable version is identical to the original.
+    pub fn is_printable(&self) -> bool {
+        self.original.is_none()
+    }
+
     pub fn add(&self,  entry: PathBuf) -> Self {
         let mut entry_path = self.as_path().to_path_buf();
         entry_path.push(entry);
