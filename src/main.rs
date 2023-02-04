@@ -134,15 +134,16 @@ fn main() {
 
     // check root directories and add them to queue
     let mut to_read = shared.to_read.lock().unwrap();
-    for dir_path in args.roots {
+    let absolute_roots = args.roots.into_iter().map(|dir_path| {
         let dir_path = fs::canonicalize(&dir_path).unwrap_or_else(|e| {
             eprintln!("Cannot canoniicalize {}: {}", PrintablePath::from(dir_path), e);
             exit(1);
         });
-        let printable = PrintablePath::from(dir_path);
+        let printable = Arc::new(PrintablePath::from(dir_path));
         storage.get_previously_read(&printable, &mut shared.previously_read);
-        to_read.queue.push(ToRead::Directory(Arc::new(printable)));
-    }
+        to_read.queue.push(ToRead::Directory(printable.clone()));
+        printable
+    }).collect::<Vec<_>>();
     drop(to_read);
     let shared = Arc::new(shared);
 
@@ -309,7 +310,9 @@ fn main() {
     let read = Arc::try_unwrap(shared)
         .expect("drop the last reference to shared")
         .previously_read;
-    storer.join().expect("join storer thread").prune(&read);
+    let mut storage = storer.join().expect("join storer thread");
+    storage.store_roots(&absolute_roots);
+    storage.prune(&read);
 
     // print any remaining logs
     while let Ok(message) = log_messages.try_recv() {

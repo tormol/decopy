@@ -83,7 +83,7 @@ impl Sqlite {
                         AS (hex(hash)) VIRTUAL
                 ) WITHOUT ROWID", // should be faster as long as path is printable and not too long
                 (), // empty list of parameters
-        ).expect("create table");
+        ).expect("create hashed table");
         self.connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS hashed_path ON hashed (path ASC)",
                 (),
@@ -92,6 +92,14 @@ impl Sqlite {
                 "CREATE INDEX IF NOT EXISTS hashed_hash ON hashed (hash)",
                 (),
         ).expect("create hash index");
+
+        self.connection.execute(
+                "CREATE TABLE IF NOT EXISTS roots (
+                    path BLOB PRIMARY KEY NOT NULL,
+                    printable_path TEXT NOT NULL
+                ) WITHOUT ROWID",
+                (),
+        ).expect("create roots table");
     }
 
     pub fn get_previously_read(&mut self,
@@ -172,6 +180,19 @@ impl Sqlite {
             statement.finalize().expect("finalize insert statement");
             transaction.commit().expect("commit inserts");
         }
+    }
+
+    pub fn store_roots(&mut self,  roots: &[Arc<PrintablePath>]) {
+        let transaction = self.connection.transaction().expect("start transaction");
+        let mut statement = transaction.prepare("INSERT OR REPLACE INTO ROOTS
+                (path, printable_path) VALUES (?1, ?2)"
+        ).expect("create INSERT OR REPLACE statement");
+        let inserted = roots.iter().map(|root| {
+            statement.execute((root.as_bytes(), root.as_str())).expect("insert into roots")
+        }).sum::<usize>();
+        statement.finalize().expect("finalize insert statement");
+        transaction.commit().expect("commit inserts");
+        let _ = self.messages.send(format!("inserted {} roots", inserted));
     }
 
     pub fn prune(&mut self,  read: &PreviouslyRead) {
