@@ -15,19 +15,18 @@
 
 use crate::shared::*;
 
-use std::collections::HashSet;
 use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use fxhash::FxBuildHasher;
 use rusqlite::{Connection, Statement};
 
 #[derive(Debug)]
 pub struct Sqlite {
     connection: ManuallyDrop<Connection>,
     hashed_rx: mpsc::Receiver<HashedFile>,
+    messages: mpsc::Sender<String>,
 }
 
 impl Drop for Sqlite {
@@ -39,19 +38,32 @@ impl Drop for Sqlite {
 
 impl Sqlite {
     /// Open the database read-write, or exit on failure.
-    pub fn open(path: &Path,  hashed_rx: mpsc::Receiver<HashedFile>) -> Self {
+    pub fn open(
+            path: &Path,
+            hashed_rx: mpsc::Receiver<HashedFile>,
+            messages: mpsc::Sender<String>,
+    ) -> Self {
         let connection = Connection::open(path)
                 .expect("open database");
-        let db = Self { connection: ManuallyDrop::new(connection),  hashed_rx };
+        let db = Self {
+            connection: ManuallyDrop::new(connection),
+            hashed_rx,
+            messages,
+        };
         db.prepare();
         return db;
     }
 
     /// Open the database read-write, or exit on failure.
-    pub fn new_in_memory(hashed_rx: mpsc::Receiver<HashedFile>) -> Self {
+    pub fn new_in_memory(hashed_rx: mpsc::Receiver<HashedFile>,  messages: mpsc::Sender<String>)
+    -> Self {
         let connection = Connection::open_in_memory()
                 .expect("create in-memory database");
-        let db = Self { connection: ManuallyDrop::new(connection),  hashed_rx };
+        let db = Self {
+            connection: ManuallyDrop::new(connection),
+            hashed_rx,
+            messages,
+        };
         db.prepare();
         return db;
     }
@@ -84,7 +96,7 @@ impl Sqlite {
 
     pub fn get_previously_read(&mut self,
             absolute_path: &Path,
-            add_to: &mut HashSet<UnreadFile, FxBuildHasher>,
+            preivously_read: &mut PreviouslyRead,
     ) {
         let absolute_path = PrintablePath::from(absolute_path);
         // FIXME the glob might be vulnerable to injection
@@ -105,7 +117,7 @@ impl Sqlite {
             })
         }).expect("get previously hashed files under root");
         for file in files {
-            add_to.insert(file.expect("get mapped row"));
+            preivously_read.insert(file.expect("get mapped row"));
         }
     }
 
@@ -122,6 +134,7 @@ impl Sqlite {
         }
         while let Ok(file) = self.hashed_rx.recv() {
             let oldest = Instant::now();
+            let mut files = 1u32;
             let transaction = self.connection.transaction().expect("start transaction");
             let mut statement = transaction.prepare("INSERT OR REPLACE
                     INTO hashed (path, printable_version, modified, apparent_size, read_size, hash)
@@ -130,14 +143,28 @@ impl Sqlite {
             insert_hashed(&mut statement, file);
             let mut timeout = insert_interval;
             while let Ok(file) = self.hashed_rx.recv_timeout(timeout) {
+                files += 1;
                 insert_hashed(&mut statement, file);
                 timeout = match insert_interval.checked_sub(Instant::elapsed(&oldest)) {
                     Some(next) => next,
                     None => break,
                 };
             }
+            let _ = self.messages.send(format!("committing {} hashed files", files));
             statement.finalize().expect("finalize insert statement");
             transaction.commit().expect("commit inserts");
         }
+    }
+
+    pub fn prune(&mut self,  read: &PreviouslyRead) {
+        let transaction = self.connection.transaction().expect("start transaction");
+        let mut statement = transaction.prepare("DELETE FROM hashed WHERE path = ?1")
+            .expect("create INSERT OR REPLACE statement");
+        let removed = read.get_not_found()
+            .map(|file| statement.execute((file.as_bytes(),)).expect("delete row") )
+            .sum::<usize>();
+        statement.finalize().expect("finalize delete statement");
+        transaction.commit().expect("commit deletes");
+        let _ = self.messages.send(format!("pruned {} files", removed));
     }
 }

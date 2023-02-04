@@ -18,10 +18,11 @@ pub use crate::bytes::Bytes;
 pub use crate::path_decoding::PrintablePath;
 pub use crate::time::PrintableTime;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fxhash::FxBuildHasher;
 
@@ -116,9 +117,42 @@ impl Debug for HashedFile {
     }
 }
 
+#[derive(Default)]
+pub struct PreviouslyRead {
+    files: HashMap<Arc<PrintablePath>, (UnreadFile, AtomicBool), FxBuildHasher>,
+}
+impl PreviouslyRead {
+    pub fn insert(&mut self,  file: UnreadFile) {
+        self.files.insert(file.path.clone(), (file, AtomicBool::new(false)));
+    }
+    pub fn check_unchanged(&self,  file: &UnreadFile) -> bool {
+        if let Some((ref info, ref still_exists)) = self.files.get(&file.path) {
+            still_exists.store(true, Ordering::SeqCst);
+            info == file
+        } else {
+            false
+        }
+    }
+    pub fn get_not_found(&self) -> impl Iterator<Item=&Arc<PrintablePath>> {
+        self.files.values().filter_map(|(ref file, ref exists)| {
+            match exists.load(Ordering::Acquire) {
+                true => None,
+                false => Some(&file.path),
+            }
+        })
+    }
+}
+impl Debug for PreviouslyRead {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        fmtr.debug_struct("PreviouslyRead")
+            .field("files", &self.files.len())
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct Shared {
-    pub previously_read: HashSet<UnreadFile, FxBuildHasher>,
+    pub previously_read: PreviouslyRead,
     pub to_read: Mutex<ReadQueue>,
     pub reader_waker: Condvar,
     pub to_hash: Mutex<HashQueue>,
@@ -130,7 +164,7 @@ pub struct Shared {
 impl Shared {
     pub fn new(buffers: AvailableBuffers,  finished: mpsc::Sender<HashedFile>) -> Self {
         Shared {
-            previously_read: HashSet::default(),
+            previously_read: PreviouslyRead::default(),
             to_read: Mutex::new(ReadQueue::default()),
             reader_waker: Condvar::new(),
             to_hash: Mutex::new(HashQueue::default()),

@@ -114,7 +114,7 @@ fn main() {
     let hasher_info = create_info_array(
             "hasher",
             u16::from(args.hasher_threads).into(),
-            log_channel
+            log_channel.clone()
     );
 
     let buffers = AvailableBuffers::new(
@@ -128,8 +128,8 @@ fn main() {
     let (complete_tx, complete_rx) = mpsc::channel::<HashedFile>();
     let mut shared = Shared::new(buffers, complete_tx);
     let mut storage = match args.database {
-        Some(ref path) => Sqlite::open(&path, complete_rx),
-        None => Sqlite::new_in_memory(complete_rx),
+        Some(ref path) => Sqlite::open(&path, complete_rx, log_channel),
+        None => Sqlite::new_in_memory(complete_rx, log_channel.clone()),
     };
 
     // check root directories and add them to queue
@@ -148,6 +148,7 @@ fn main() {
     // start storer thread
     let storer = thread::Builder::new().name("storer".to_string()).spawn(move || {
         storage.save_hashed(Duration::from_secs(2));
+        return storage;
     }).expect("create storer thread");
 
     // Keep my desktop responsive
@@ -304,6 +305,11 @@ fn main() {
         thread.join().unwrap();
     }
 
+    let read = Arc::try_unwrap(shared)
+        .expect("drop the last reference to shared")
+        .previously_read;
+    storer.join().expect("join storer thread").prune(&read);
+
     // print any remaining logs
     while let Ok(message) = log_messages.try_recv() {
         display.push_str(&message);
@@ -311,7 +317,4 @@ fn main() {
     }
     stderr().write_all(display.as_bytes()).unwrap();
     display.clear();
-
-    drop(Arc::try_unwrap(shared).expect("drop the last reference to shared"));
-    storer.join().expect("join storer thread");
 }
