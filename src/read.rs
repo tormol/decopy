@@ -60,33 +60,25 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
                     continue;
                 }
             };
-            let modified = match (metadata.modified(), metadata.created()) {
-                (Ok(modified), Ok(created)) if modified >= created => modified,
-                (Ok(modified), Ok(created)) => {
-                    thread_info.log_message(format!(
-                            "Creation time for {} is newer than its modification time: {} vs {}",
-                            entry_path,
-                            PrintableTime::from(created),
-                            PrintableTime::from(modified),
-                    ));
-                    created
-                },
-                (Ok(modified), Err(_)) => modified,
-                (Err(e), Ok(created)) => {
-                    thread_info.log_message(format!(
-                            "Cannot get modification time for {}: {}, using creation time",
-                            entry_path,
-                            e,
-                    ));
-                    created
-                },
-                (Err(e), Err(_)) => {
-                    thread_info.log_message(format!(
-                            "Cannot get modification or creation time for {}: {}",
-                            entry_path,
-                            e,
-                    ));
-                    continue;
+            let modified = match metadata.modified() {
+                Ok(modified) => modified,
+                Err(e) => match metadata.created() {
+                    Ok(created) => {
+                        thread_info.log_message(format!(
+                                "Cannot get modification time for {}: {}, using creation time",
+                                entry_path,
+                                e,
+                        ));
+                        created
+                    },
+                    Err(_) => {
+                        thread_info.log_message(format!(
+                                "Cannot get modification or creation time for {}: {}",
+                                entry_path,
+                                e,
+                        ));
+                        continue;
+                    },
                 },
             };
             let modified = PrintableTime::from(modified).clamp_to_yyyy();

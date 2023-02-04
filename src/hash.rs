@@ -56,6 +56,15 @@ fn hash_file(
     let Ok(hash) = <[u8; 32]>::try_from(&hash_result[..]) else {
         panic!("hash has length {}, not 32 as explected", hash_result.len());
     };
+    if position != file.size {
+        thread_info.log_message(format!(
+                "{} has apparent size {:?} ({}) but {:?} was read",
+                file.path,
+                Bytes(file.size),
+                Bytes(file.size),
+                Bytes(position),
+        ));
+    }
     hashed_tx.send(HashedFile {
             path: file.path,
             modified: file.modified,
