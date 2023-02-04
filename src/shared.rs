@@ -14,23 +14,24 @@
  */
 
 pub use crate::available_buffers::AvailableBuffers;
+pub use crate::bytes::Bytes;
 pub use crate::path_decoding::PrintablePath;
+pub use crate::time::PrintableTime;
 
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
-use std::time::SystemTime;
 
-#[derive(Clone, Debug)]
-pub struct UnhashedFile {
+#[derive(Clone, Debug, PartialEq,Eq,Hash)]
+pub struct UnreadFile {
     pub path: Arc<PrintablePath>,
-    pub modified: SystemTime,
+    pub modified: PrintableTime,
     pub size: u64,
 }
 
 #[derive(Clone, Debug)]
 pub enum ToRead {
-    File(UnhashedFile),
+    File(UnreadFile),
     Directory(Arc<PrintablePath>),
 }
 
@@ -62,7 +63,7 @@ pub enum FilePart {
 }
 
 pub struct HashQueue {
-    pub queue: Vec<(UnhashedFile, mpsc::Receiver<FilePart>)>,
+    pub queue: Vec<(UnreadFile, mpsc::Receiver<FilePart>)>,
     pub stop_now: bool,
     pub stop_when_empty: bool,
 }
@@ -81,6 +82,37 @@ impl Debug for HashQueue {
     }
 }
 
+#[derive(Clone,Copy)]
+struct Hex<const N: usize>([u8; N]);
+impl<const N: usize> Debug for Hex<N> {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        for &byte in &self.0 {
+            write!(fmtr, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, PartialEq,Eq,Hash)]
+pub struct HashedFile {
+    pub path: Arc<PrintablePath>,
+    pub modified: PrintableTime,
+    pub apparent_size: u64,
+    pub read_size: u64,
+    pub hash: [u8; 32],
+}
+impl Debug for HashedFile {
+    fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
+        fmtr.debug_struct("HashedFile")
+            .field("path", &self.path)
+            .field("modified", &self.modified)
+            .field("apparent_size", &Bytes(self.apparent_size))
+            .field("read_size", &Bytes(self.read_size))
+            .field("hash", &Hex(self.hash))
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct Shared {
     pub to_read: Mutex<ReadQueue>,
@@ -88,16 +120,18 @@ pub struct Shared {
     pub to_hash: Mutex<HashQueue>,
     pub hasher_waker: Condvar,
     pub buffers: AvailableBuffers,
+    pub finished: Mutex<mpsc::Sender<HashedFile>>,
 }
 
 impl Shared {
-    pub fn new(buffers: AvailableBuffers) -> Arc<Self> {
+    pub fn new(buffers: AvailableBuffers,  finished: mpsc::Sender<HashedFile>) -> Arc<Self> {
         Arc::new(Shared {
             to_read: Mutex::new(ReadQueue::default()),
             reader_waker: Condvar::new(),
             to_hash: Mutex::new(HashQueue::default()),
             hasher_waker: Condvar::new(),
             buffers,
+            finished: Mutex::new(finished),
         })
     }
 }

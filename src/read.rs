@@ -84,7 +84,8 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
                     continue;
                 },
             };
-            ToRead::File(UnhashedFile { path: entry_path, modified, size: metadata.len(), })
+            let modified = PrintableTime::from(modified).clamp_to_yyyy();
+            ToRead::File(UnreadFile { path: entry_path, modified, size: metadata.len(), })
         } else if file_type.is_dir() {
             ToRead::Directory(entry_path)
         } else {
@@ -100,7 +101,7 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
     }
 }
 
-fn read_file(file_info: UnhashedFile,  shared: &Shared,  thread_info: &ThreadInfo) {
+fn read_file(file_info: UnreadFile,  shared: &Shared,  thread_info: &ThreadInfo) {
     thread_info.set_state(Opening);
     thread_info.set_working_on(Some(file_info.path.clone()));
     let mut file = match fs::File::open(file_info.path.as_path()) {

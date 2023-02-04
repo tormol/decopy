@@ -31,7 +31,7 @@ use std::time::SystemTime;
 ///   The sub-second part of a `SystemTime` is ignored.
 /// * Can only display dates between years ±32768.
 ///   Dates outside that range are will be clamped to the max and min value.
-#[derive(Clone,Copy, PartialEq,Eq, PartialOrd,Ord)]
+#[derive(Clone,Copy, PartialEq,Eq,Hash, PartialOrd,Ord)]
 pub struct PrintableTime {
     year: i16,
     month: NonZeroU8,

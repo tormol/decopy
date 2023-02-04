@@ -17,6 +17,7 @@ use std::borrow::Borrow;
 use std::cmp::min;
 use std::ffi::OsStr;
 use std::fmt::{self, Debug, Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::path::{MAIN_SEPARATOR, Component, Path, PathBuf};
 #[cfg(unix)]
@@ -253,8 +254,23 @@ pub struct PrintablePath {
 }
 
 impl PrintablePath {
+    /// Get the lossisly converted printable version of the path.
     pub fn as_str(&self) -> &str {
         &&self.printable
+    }
+
+    /// Get the original path as bytes.
+    ///
+    /// Will fail for non-UTF-8 paths on Windows, but on UNIX or WASI.
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        if let Some(ref original) = &self.original {
+            #[cfg(any(unix, target_os="wasi"))]
+            {Some(original.as_os_str().as_bytes())}
+            #[cfg(not(any(unix, target_os="wasi")))]
+            None
+        } else {
+            Some(self.printable.as_bytes())
+        }
     }
 
     pub fn display_within(&self,  buf: &mut String,  terminal_width: usize) {
@@ -301,6 +317,12 @@ impl PartialEq for PrintablePath {
 }
 
 impl Eq for PrintablePath {}
+
+impl Hash for PrintablePath {
+    fn hash<H: Hasher>(&self,  hasher: &mut H) {
+        self.printable.hash(hasher)
+    }
+}
 
 impl Deref for PrintablePath {
     type Target = Path;

@@ -13,8 +13,6 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::bytes::*;
-use crate::time::*;
 use crate::shared::*;
 use crate::thread_info::*;
 
@@ -23,9 +21,9 @@ use std::sync::{Arc, mpsc};
 use sha2::{Sha256, Digest};
 
 fn hash_file(
-        file: UnhashedFile,  parts: mpsc::Receiver<FilePart>,
+        file: UnreadFile,  parts: mpsc::Receiver<FilePart>,
         hasher: &mut sha2::Sha256,  thread_info: &ThreadInfo,
-        buffers: &AvailableBuffers,
+        buffers: &AvailableBuffers,  hashed_tx: &mpsc::Sender<HashedFile>,
 ) {
     let mut position = 0;
 
@@ -55,15 +53,20 @@ fn hash_file(
     }
 
     let hash_result = hasher.finalize_reset();
-    thread_info.log_message(format!("{} {:#} {} {:#x}",
-            file.path,
-            PrintableTime::from(file.modified).clamp_to_yyyy(),
-            Bytes(position),
-            hash_result,
-    ));
+    let Ok(hash) = <[u8; 32]>::try_from(&hash_result[..]) else {
+        panic!("hash has length {}, not 32 as explected", hash_result.len());
+    };
+    hashed_tx.send(HashedFile {
+            path: file.path,
+            modified: file.modified,
+            apparent_size: file.size,
+            read_size: position,
+            hash,
+    }).unwrap();
 }
 
 pub fn hash_files(shared: Arc<Shared>,  thread_info: &ThreadInfo) {
+    let hashed_tx = shared.finished.lock().unwrap().clone();
     let mut hasher = Sha256::new();
     let mut lock = shared.to_hash.lock().unwrap();
 
@@ -74,7 +77,7 @@ pub fn hash_files(shared: Arc<Shared>,  thread_info: &ThreadInfo) {
             break;
         } else if let Some((path, rx)) = lock.queue.pop() {
             drop(lock);
-            hash_file(path, rx, &mut hasher, thread_info, &shared.buffers);
+            hash_file(path, rx, &mut hasher, thread_info, &shared.buffers, &hashed_tx);
             lock = shared.to_hash.lock().unwrap();
         } else if lock.stop_when_empty {
             thread_info.set_state(Quit);

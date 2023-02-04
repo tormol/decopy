@@ -18,6 +18,8 @@ extern crate clap;
 #[cfg(target_os="linux")]
 extern crate ioprio;
 extern crate is_terminal;
+#[macro_use]
+extern crate rusqlite;
 extern crate sha2;
 extern crate term_size;
 extern crate thread_priority;
@@ -30,12 +32,14 @@ mod bytes;
 mod shared;
 mod read;
 mod hash;
+mod storage;
 
 use bytes::*;
 use path_decoding::*;
 use hash::*;
 use read::*;
 use shared::*;
+use storage::Sqlite;
 use thread_info::*;
 
 use std::{fmt::Write, fs, path::PathBuf, process::exit, str::FromStr, thread};
@@ -117,7 +121,10 @@ fn main() {
         eprintln!("{}", e);
         exit(2);
     });
-    let shared = Shared::new(buffers);
+
+    let (complete_tx, complete_rx) = mpsc::channel::<HashedFile>();
+    let shared = Shared::new(buffers, complete_tx);
+    let mut storage = Sqlite::new(complete_rx);
 
     // check root directories and add them to queue
     let mut to_read = shared.to_read.lock().unwrap();
@@ -129,6 +136,10 @@ fn main() {
         to_read.queue.push(ToRead::Directory(Arc::new(dir_path.into())));
     }
     drop(to_read);
+
+    let storer = thread::Builder::new().name("storer".to_string()).spawn(move || {
+        storage.save_hashed(Duration::from_secs(2));
+    }).expect("create storer thread");
 
     // Keep my desktop responsive
     #[cfg(target_os="linux")]
@@ -291,4 +302,7 @@ fn main() {
     }
     stderr().write_all(display.as_bytes()).unwrap();
     display.clear();
+
+    drop(Arc::try_unwrap(shared).expect("drop the last reference to shared"));
+    storer.join().expect("join storer thread");
 }
