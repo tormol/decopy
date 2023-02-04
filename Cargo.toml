@@ -11,6 +11,7 @@ default-run = "deduplicator-scan"
 [dependencies]
 arc-swap = "1.6.0"
 clap = {version="4.1.1", features=["derive"]}
+fxhash = "0.2.1"
 is-terminal = "0.4.2"
 rusqlite = "0.28.0" # blob feature is for streaming blobs, which I don't need
 sha2 = {version="0.10.6", features=["asm"]}

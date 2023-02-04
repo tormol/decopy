@@ -82,7 +82,12 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
                 },
             };
             let modified = PrintableTime::from(modified).clamp_to_yyyy();
-            ToRead::File(UnreadFile { path: entry_path, modified, size: metadata.len(), })
+
+            let unread = UnreadFile { path: entry_path, modified, size: metadata.len(), };
+            if shared.previously_read.contains(&unread) {
+                continue;
+            }
+            ToRead::File(unread)
         } else if file_type.is_dir() {
             ToRead::Directory(entry_path)
         } else {

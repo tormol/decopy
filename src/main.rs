@@ -15,6 +15,7 @@
 
 extern crate arc_swap;
 extern crate clap;
+extern crate fxhash;
 #[cfg(target_os="linux")]
 extern crate ioprio;
 extern crate is_terminal;
@@ -125,7 +126,7 @@ fn main() {
     });
 
     let (complete_tx, complete_rx) = mpsc::channel::<HashedFile>();
-    let shared = Shared::new(buffers, complete_tx);
+    let mut shared = Shared::new(buffers, complete_tx);
     let mut storage = match args.database {
         Some(ref path) => Sqlite::open(&path, complete_rx),
         None => Sqlite::new_in_memory(complete_rx),
@@ -138,10 +139,13 @@ fn main() {
             eprintln!("Cannot canoniicalize {}: {}", PrintablePath::from(dir_path), e);
             exit(1);
         });
+        storage.get_previously_read(&dir_path, &mut shared.previously_read);
         to_read.queue.push(ToRead::Directory(Arc::new(dir_path.into())));
     }
     drop(to_read);
+    let shared = Arc::new(shared);
 
+    // start storer thread
     let storer = thread::Builder::new().name("storer".to_string()).spawn(move || {
         storage.save_hashed(Duration::from_secs(2));
     }).expect("create storer thread");

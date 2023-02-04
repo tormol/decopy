@@ -15,8 +15,9 @@
 
 //! std::time cannot format, and this is not worth pulling in chrono for
 
-use std::fmt::{Debug, Display, Formatter, Result};
+use std::fmt::{Debug, Display, Formatter, Result as fmtResult};
 use std::num::NonZeroU8;
+use std::str::FromStr;
 use std::time::SystemTime;
 
 /// A type to display a `SystemTime` in a human-readable way.
@@ -59,33 +60,43 @@ const fn to_nonzero(n: u8) -> NonZeroU8 {
     }
 }
 
+const fn try_from_parts(year: i16,  month: u8,  day: u8,  hour: u8,  minute: u8,  second: u8)
+ -> Result<PrintableTime, &'static str> {
+    if month < 1 || month > 12 {
+        return Err("month is outside the range 1..=12");
+    } else if day < 1 || day > days_in_months(year as i64)[month as usize-1] as u8 {
+        return Err("day is outside the range for the given month and year");
+    } else if hour > 23 {
+        return Err("hour is outside the range 0..=23");
+    } else if minute > 59 || second > 59 {
+        return Err("minute or second is outside the range 0..=59");
+    } else {
+        Ok(PrintableTime {
+            year,
+            month: to_nonzero(month as u8),
+            day: to_nonzero(day as u8),
+            hour,
+            minute,
+            second,
+        })
+    }
+}
+
+
 impl PrintableTime {
-    pub const MAX: Self = Self::new([i16::MAX, 12, 31, 23, 59, 59]);
-    pub const MIN: Self = Self::new([i16::MIN, 1, 1, 0, 0, 0]);
+    pub const MAX: Self = Self::new(i16::MAX, 12, 31, 23, 59, 59);
+    pub const MIN: Self = Self::new(i16::MIN, 1, 1, 0, 0, 0);
 
     /// Create a datetime from [year, month, day, hour, minute, second].
     ///
     /// # Panics
     ///
     /// If any field is outside their valid range, such as month: 0 or hour: 24.
-    pub const fn new([year, month, day, hour, minute, second]: [i16; 6]) -> PrintableTime {
-        if month < 1 || month > 12 {
-            panic!("month is outside the range 1..=12");
-        } else if day < 1 || day > days_in_months(year as i64)[month as usize-1] as i16 {
-            panic!("day is outside the range for the given month and year");
-        } else if hour < 0 || hour > 23 {
-            panic!("hour is outside the range 0..=23");
-        } else if minute < 0 || minute > 59 || second < 0 || second > 59 {
-            panic!("minute or second is outside the range 0..=59");
-        } else {
-            PrintableTime {
-                year,
-                month: to_nonzero(month as u8),
-                day: to_nonzero(day as u8),
-                hour: hour as u8,
-                minute: minute as u8,
-                second: second as u8,
-            }
+    pub const fn new(year: i16,  month: u8,  day: u8,  hour: u8,  minute: u8,  second: u8)
+    -> PrintableTime {
+        match try_from_parts(year, month, day, hour, minute, second) {
+            Ok(datetime) => datetime,
+            Err(e) => panic!("{}", e),
         }
     }
 
@@ -151,8 +162,8 @@ impl PrintableTime {
     pub const fn clamp_to_yyyy(self) -> Self {
         match self.year {
             0..=9999 => self,
-            i16::MIN..=-1 => PrintableTime::new([0, 1, 1, 0, 0, 0]),
-            10000..=i16::MAX => PrintableTime::new([9999, 12, 31, 23, 59, 59]),
+            i16::MIN..=-1 => PrintableTime::new(0, 1, 1, 0, 0, 0),
+            10000..=i16::MAX => PrintableTime::new(9999, 12, 31, 23, 59, 59),
         }
     }
 
@@ -172,7 +183,7 @@ impl PrintableTime {
 }
 
 impl Debug for PrintableTime {
-    fn fmt(&self,  formatter: &mut Formatter) -> Result {
+    fn fmt(&self,  formatter: &mut Formatter) -> fmtResult {
         write!(formatter, "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
                 self.year, self.month, self.day,
                 self.hour, self.minute, self.second,
@@ -181,7 +192,7 @@ impl Debug for PrintableTime {
 }
 
 impl Display for PrintableTime {
-    fn fmt(&self,  formatter: &mut Formatter) -> Result {
+    fn fmt(&self,  formatter: &mut Formatter) -> fmtResult {
         if formatter.alternate() {
             write!(formatter, "{:04}-{:02}-{:02}", self.year, self.month, self.day)
         } else {
@@ -217,6 +228,34 @@ impl From<SystemTime> for PrintableTime {
                 Err(_) => Self::MIN,
             },
         }
+    }
+}
+
+impl FromStr for PrintableTime {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<PrintableTime, Self::Err> {
+        const FORMAT_ERR: &'static str = "must be on the form yyyy-mm-dd HH:MM:SS";
+        if s.len() < 16  ||  !s.is_ascii() {
+            return Err(FORMAT_ERR);
+        }
+        let (year, s) = match s[1..7].bytes().position(|b| b == b'-' ) {
+            Some(pos_min_1) => s.split_at(pos_min_1+1),
+            None => return Err(FORMAT_ERR),
+        };
+        let s = &s[1..];
+        let b = s.as_bytes();
+        if s.len() != 14  ||  b[2] != b'-'  || b[5] != b' '  ||  b[8] != b':'  ||  b[11] != b':' {
+            return Err(FORMAT_ERR);
+        }
+
+        let Ok(year) = i16::from_str(year) else {return Err("year is not a number");};
+        let Ok(month) = u8::from_str(&s[..2]) else {return Err("month is not a number");};
+        let Ok(day) = u8::from_str(&s[3..5]) else {return Err("day is not a number");};
+        let Ok(hour) = u8::from_str(&s[6..8]) else {return Err("hour is not a number");};
+        let Ok(minute) = u8::from_str(&s[9..11]) else {return Err("minute is not a number");};
+        let Ok(second) = u8::from_str(&s[12..]) else {return Err("second is not a number");};
+
+        try_from_parts(year, month, day, hour, minute, second)
     }
 }
 
@@ -275,16 +314,41 @@ mod tests {
     #[test]
     fn clamp_to_4_digit_year() {
         assert_eq!(
-                PrintableTime::new([-10, 5, 5, 9, 9, 9]).clamp_to_yyyy(),
-                PrintableTime::new([0, 1, 1, 0, 0, 0]),
+                PrintableTime::new(-10, 5, 5, 9, 9, 9).clamp_to_yyyy(),
+                PrintableTime::new(0, 1, 1, 0, 0, 0),
         );
         assert_eq!(
-                PrintableTime::new([30000, 9, 9, 21, 21, 21]).clamp_to_yyyy(),
-                PrintableTime::new([9999, 12, 31, 23, 59, 59]),
+                PrintableTime::new(30000, 9, 9, 21, 21, 21).clamp_to_yyyy(),
+                PrintableTime::new(9999, 12, 31, 23, 59, 59),
         );
         assert_eq!(
-                PrintableTime::new([0, 10, 10, 12, 12, 12]).clamp_to_yyyy(),
-                PrintableTime::new([0, 10, 10, 12, 12, 12]),
+                PrintableTime::new(0, 10, 10, 12, 12, 12).clamp_to_yyyy(),
+                PrintableTime::new(0, 10, 10, 12, 12, 12),
+        );
+    }
+
+    #[test]
+    fn from_str() {
+        //fn f(s: &str) -> Retult<PrintableTime, &'static str> {}
+        assert_eq!(
+                PrintableTime::from_str("2022-02-04 01:40:30").unwrap(),
+                PrintableTime::new(2022, 2, 4, 1, 40, 30),
+        );
+        assert_eq!(
+                PrintableTime::from_str("30567-08-09 10:11:12").unwrap(),
+                PrintableTime::new(30567, 8, 9, 10, 11, 12),
+        );
+        assert_eq!(
+                PrintableTime::from_str("5-04-03 02:01:00").unwrap(),
+                PrintableTime::new(5, 4, 3, 2, 1, 0),
+        );
+        assert_eq!(
+                PrintableTime::from_str("-13-12-11 10:09:08").unwrap(),
+                PrintableTime::new(-13, 12, 11, 10, 9, 8),
+        );
+        assert_eq!(
+                PrintableTime::from_str("-12345-06-07 20:21:22").unwrap(),
+                PrintableTime::new(-12345, 6, 7, 20, 21, 22),
         );
     }
 }

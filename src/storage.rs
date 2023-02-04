@@ -15,11 +15,13 @@
 
 use crate::shared::*;
 
+use std::collections::HashSet;
 use std::mem::ManuallyDrop;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+use fxhash::FxBuildHasher;
 use rusqlite::{Connection, Statement};
 
 #[derive(Debug)]
@@ -78,6 +80,33 @@ impl Sqlite {
                 "CREATE INDEX IF NOT EXISTS hashed_hash ON hashed (hash)",
                 (),
         ).expect("create hash index");
+    }
+
+    pub fn get_previously_read(&mut self,
+            absolute_path: &Path,
+            add_to: &mut HashSet<UnreadFile, FxBuildHasher>,
+    ) {
+        let absolute_path = PrintablePath::from(absolute_path);
+        // FIXME the glob might be vulnerable to injection
+        let mut stmt = self.connection.prepare(
+                "SELECT path, modified, apparent_size FROM hashed WHERE path GLOB ?1 || '*'"
+        ).expect("create SELECT statement");
+        let files = stmt.query_map(params!(absolute_path.as_bytes()), |row | {
+            let path: Vec<u8> = row.get(0).expect("get path collumn");
+            let path = Arc::new(PrintablePath::try_from(path).unwrap());
+            let modified = row.get::<_, String>(1)
+                    .expect("get modified collumn")
+                    .parse::<PrintableTime>()
+                    .expect("parse date-time");
+            Ok(UnreadFile {
+                    path,
+                    modified,
+                    size: row.get(2).expect("get size collumn"),
+            })
+        }).expect("get previously hashed files under root");
+        for file in files {
+            add_to.insert(file.expect("get mapped row"));
+        }
     }
 
     pub fn save_hashed(&mut self,  insert_interval: Duration) {

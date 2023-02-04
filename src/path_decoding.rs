@@ -15,15 +15,15 @@
 
 use std::borrow::Borrow;
 use std::cmp::min;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::path::{MAIN_SEPARATOR, Component, Path, PathBuf};
 #[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(target_os="wasi")]
-use std::os::wasi::ffi::OsStrExt;
+use std::os::wasi::ffi::{OsStrExt, OsStringExt};
 #[cfg(windows)]
 use std::{fmt::Write, os::windows::ffi::OsStrExt};
 #[cfg(not(any(unix, target_os="wasi", windows)))]
@@ -44,7 +44,7 @@ pub fn is_printable_str(path: &str) -> bool {
     path.bytes().all(|b| b > 0x1f  &&  b != 127 )
 }
 
-pub fn to_printable(path: &Path) -> Option<&str> {
+pub fn as_printable(path: &Path) -> Option<&str> {
     path.to_str().filter(|&s| is_printable_str(s) )
 }
 
@@ -367,7 +367,7 @@ impl From<PathBuf> for PrintablePath {
 
 impl From<&Path> for PrintablePath {
     fn from(path: &Path) -> PrintablePath {
-        if let Some(s) = to_printable(path) {
+        if let Some(s) = as_printable(path) {
             PrintablePath { printable: s.to_string(),  original: None }
         } else {
             let mut printable = String::new();
@@ -382,6 +382,31 @@ impl From<PrintablePath> for PathBuf {
         match printable.original {
             Some(path_buf) => path_buf,
             None => PathBuf::from(printable.printable),
+        }
+    }
+}
+
+impl TryFrom<Vec<u8>> for PrintablePath {
+    type Error = &'static str;
+    fn try_from(path: Vec<u8>) -> Result<Self, Self::Error> {
+        match String::from_utf8(path) {
+            Ok(utf8) if is_printable_str(&utf8) => {
+                Ok(PrintablePath { printable: utf8,  original: None })
+            },
+            Ok(utf8) => {
+                let mut printable = String::new();
+                write_printable(Path::new(&utf8), &mut printable);
+                Ok(PrintablePath { printable,  original: Some(PathBuf::from(utf8)) })
+            },
+            #[cfg(any(unix, target_os="wasi"))]
+            Err(err) => {
+                let path = PathBuf::from(OsString::from_vec(err.into_bytes()));
+                let mut printable = String::new();
+                write_printable(&path, &mut printable);
+                Ok(PrintablePath { printable, original: Some(path) })
+            },
+            #[cfg(not(any(unix, target_os="wasi")))]
+            Err(_) => Err("Cannot convert from non-UTF-8 paths on Windows")
         }
     }
 }

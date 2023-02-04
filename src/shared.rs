@@ -18,9 +18,12 @@ pub use crate::bytes::Bytes;
 pub use crate::path_decoding::PrintablePath;
 pub use crate::time::PrintableTime;
 
+use std::collections::HashSet;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
+
+use fxhash::FxBuildHasher;
 
 #[derive(Clone, Debug, PartialEq,Eq,Hash)]
 pub struct UnreadFile {
@@ -115,6 +118,7 @@ impl Debug for HashedFile {
 
 #[derive(Debug)]
 pub struct Shared {
+    pub previously_read: HashSet<UnreadFile, FxBuildHasher>,
     pub to_read: Mutex<ReadQueue>,
     pub reader_waker: Condvar,
     pub to_hash: Mutex<HashQueue>,
@@ -124,14 +128,15 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(buffers: AvailableBuffers,  finished: mpsc::Sender<HashedFile>) -> Arc<Self> {
-        Arc::new(Shared {
+    pub fn new(buffers: AvailableBuffers,  finished: mpsc::Sender<HashedFile>) -> Self {
+        Shared {
+            previously_read: HashSet::default(),
             to_read: Mutex::new(ReadQueue::default()),
             reader_waker: Condvar::new(),
             to_hash: Mutex::new(HashQueue::default()),
             hasher_waker: Condvar::new(),
             buffers,
             finished: Mutex::new(finished),
-        })
+        }
     }
 }
