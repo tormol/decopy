@@ -89,8 +89,11 @@ impl Sqlite {
             insert_hashed(&mut statement, file);
             let mut timeout = insert_interval;
             while let Ok(file) = self.hashed_rx.recv_timeout(timeout) {
-                timeout = insert_interval - Instant::elapsed(&oldest);
                 insert_hashed(&mut statement, file);
+                timeout = match insert_interval.checked_sub(Instant::elapsed(&oldest)) {
+                    Some(next) => next,
+                    None => break,
+                };
             }
             statement.finalize().expect("finalize insert statement");
             transaction.commit().expect("commit inserts");

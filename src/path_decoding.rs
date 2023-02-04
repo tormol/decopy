@@ -71,7 +71,7 @@ fn printable_cp1252(s: &OsStr,  out: &mut String) {
         let display = match b {
             0x00..=0x1f => char::from_u32('␀' as u32 + b as u32).unwrap(),
             0x7f => '␡',
-            0x00..=0x9f => CP1252_SPECIAL[b as usize - 0x80],
+            0x80..=0x9f => CP1252_SPECIAL[b as usize - 0x80],
             _ => b as char,
         };
         out.push(display);

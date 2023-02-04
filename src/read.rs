@@ -16,16 +16,19 @@
 use crate::shared::*;
 use crate::thread_info::*;
 
-use std::{fs, io::Read, process::exit};
+use std::{fs, io::Read};
 use std::sync::{Arc, mpsc};
 
 fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &ThreadInfo) {
     thread_info.set_state(Opening);
     thread_info.set_working_on(Some(dir_path.clone()));
-    let entries = fs::read_dir(dir_path.as_path()).unwrap_or_else(|e| {
-        eprintln!("Cannot open {}: {}", dir_path, e);
-        exit(1);
-    });
+    let entries = match fs::read_dir(dir_path.as_path()) {
+        Ok(entries) => entries,
+        Err(e) => {
+            thread_info.log_message(format!("Cannot open {}: {}", dir_path, e));
+            return;
+        }
+    };
     thread_info.set_state(Reading);
     for entry in entries {
         let entry = match entry {
@@ -59,10 +62,12 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
             };
             let modified = match (metadata.modified(), metadata.created()) {
                 (Ok(modified), Ok(created)) if modified >= created => modified,
-                (Ok(_), Ok(created)) => {
+                (Ok(modified), Ok(created)) => {
                     thread_info.log_message(format!(
-                            "Creation time for for {} is newer than its modification time",
+                            "Creation time for {} is newer than its modification time: {} vs {}",
                             entry_path,
+                            PrintableTime::from(created),
+                            PrintableTime::from(modified),
                     ));
                     created
                 },
