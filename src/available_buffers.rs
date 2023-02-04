@@ -81,6 +81,34 @@ impl AvailableBuffers {
         })
     }
 
+    /// Check if resized or allocated buffer has unused capacity.
+    fn check_capacity(&self,
+            mut buffer: Vec<u8>,
+            requested_size: usize,
+            thread_info: &ThreadInfo,
+    ) -> Box<[u8]> {
+        if buffer.capacity() > self.max_single_buffer as usize {
+            thread_info.log_message(format!("vec of size {} has too big capacity {}",
+                    buffer.len(),
+                    buffer.capacity(),
+            ));
+            let too_much = buffer.capacity() - requested_size;
+            buffer.truncate(requested_size as usize);
+            buffer.shrink_to_fit();
+            self.current_buffers_size.fetch_sub(too_much, Ordering::SeqCst);
+        }
+        let extra_capacity = buffer.capacity() - buffer.len();
+        if extra_capacity > 0 {
+            thread_info.log_message(format!("vec of size {} has extra capacity {}",
+                    buffer.len(),
+                    extra_capacity,
+            ));
+            self.current_buffers_size.fetch_add(extra_capacity, Ordering::SeqCst);
+            buffer.resize(buffer.capacity(), 0);
+        }
+        buffer.into_boxed_slice()
+    }
+
     pub fn get_buffer(&self,  requested_size: usize,  thread_info: &ThreadInfo) -> Box<[u8]> {
         if requested_size == 0 {
             return Box::default();
@@ -91,7 +119,7 @@ impl AvailableBuffers {
         );
         let key = (requested_size as u32, 0);
         let mut map = self.map.lock().unwrap();
-        let mut buffer = loop {
+        loop {
             // see if there is something big enough
             if let Some((&next, _)) = map.range(key..).next() {
                 let buffer = map.remove(&next).unwrap();
@@ -105,7 +133,7 @@ impl AvailableBuffers {
                 let mut to_shrink = buffer.into_vec();
                 to_shrink.truncate(requested_size);
                 to_shrink.shrink_to_fit();
-                break to_shrink;
+                return self.check_capacity(to_shrink, requested_size, thread_info)
             }
             // see if there is something slightly too small
             if let Some((&smaller, _)) = map.range(..key).last() {
@@ -120,7 +148,7 @@ impl AvailableBuffers {
                 // mutex prevents any other thread from allocating
                 self.current_buffers_size.fetch_add(requested_size, Ordering::Relaxed);
                 drop(map);
-                break vec![0u8; requested_size];
+                return self.check_capacity(vec![0u8; requested_size], requested_size, thread_info);
             }
             // see if there is a buffer that can be grown within the limit.
             let need_to_release = requested_size as isize - unallocated;
@@ -131,32 +159,17 @@ impl AvailableBuffers {
                 drop(map);
                 let mut to_grow = to_grow.into_vec();
                 to_grow.resize(requested_size, 0);
-                break to_grow;
+                return self.check_capacity(to_grow, requested_size, thread_info);
             }
             // wait
             thread_info.set_state(WaitingForMemory);
             map = self.starving.wait(map).unwrap();
         };
-
-        // check if resized or allocated buffer has unused capacity
-        let extra_capacity = buffer.capacity() - buffer.len();
-        if extra_capacity > 0 {
-            self.current_buffers_size.fetch_add(extra_capacity, Ordering::SeqCst);
-            thread_info.log_message(format!("vec of size {} has extra capacity {}",
-                    buffer.len(),
-                    extra_capacity,
-            ));
-            buffer.resize(buffer.capacity(), 0);
-        }
-        if buffer.len() != requested_size {
-            thread_info.log_message(format!("requested {} got {}", requested_size, buffer.len()));
-        }
-        buffer.into_boxed_slice()
     }
 
     pub fn return_buffer(&self,  buffer: Box<[u8]>) {
         // reject trying to add too small or too big buffers
-        if buffer.len() < Self::MIN_BUFFER_SIZE  ||  buffer.len() > self.max_buffers_size as usize {
+        if buffer.len() < Self::MIN_BUFFER_SIZE  ||  buffer.len() > self.max_single_buffer as usize {
             return;
         }
         let size = buffer.len() as u32;
