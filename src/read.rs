@@ -90,6 +90,8 @@ fn read_dir(dir_path: Arc<PrintablePath>,  shared: &Shared,  thread_info: &Threa
             ToRead::File(unread)
         } else if file_type.is_dir() {
             ToRead::Directory(entry_path)
+        } else if file_type.is_symlink() {
+            continue;
         } else {
             let file_type = if file_type.is_symlink() {"symlink"} else {"special file"};
             thread_info.log_message(format!("{} is a {}, skipping.", entry_path, file_type));
@@ -109,7 +111,7 @@ fn read_file(file_info: UnreadFile,  shared: &Shared,  thread_info: &ThreadInfo)
     let mut file = match fs::File::open(file_info.path.as_path()) {
         Ok(file) => file,
         Err(e) => {
-            thread_info.log_message(format!("Cannot open  {}: {}", file_info.path, e));
+            thread_info.log_message(format!("Cannot open {}: {}", file_info.path, e));
             return;
         }
     };
