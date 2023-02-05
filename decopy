@@ -1,16 +1,31 @@
 #!/usr/bin/env python3
+
+# Copyright 2023 Torbjørn Birch Moltu
+#
+# This file is part of Decopy.
+# Decopy is free software: you can redistribute it and/or modify it under the
+# terms of the GNU General Public License as published by the Free Software Foundation,
+# either version 3 of the License, or (at your option) any later version.
+#
+# Decopy is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with Decopy.
+# If not, see <https://www.gnu.org/licenses/>.
+
 import sys
+import os
 import os.path
 import sqlite3
 
 def usage():
-    print('Usage: %s <database file> show|prune' % sys.argv[0], file=sys.stderr)
+    print('Usage: %s <database file> scan|show|prune' % sys.argv[0], file=sys.stderr)
     sys.exit(1)
 
-if len(sys.argv) != 3 and len(sys.argv) != 4:
-    usage()
-
-if sys.argv[2] == 'show':
+if len(sys.argv) > 2 and sys.argv[2] == 'scan':
+    os.execvp('cargo', ['cargo', 'run', '--', '-d', sys.argv[1]] + sys.argv[3:])
+elif (len(sys.argv) == 3 or len(sys.argv) == 4) and sys.argv[2] == 'show':
     # open read-only. FIXME escape name
     connection = sqlite3.connect('file:%s?mode=ro' % sys.argv[1])
     if len(sys.argv) == 4:
@@ -35,7 +50,7 @@ if sys.argv[2] == 'show':
         result = connection.execute('SELECT printable_path, modified, read_size FROM hashed')
     for printable, modified, size in result.fetchall():
         print('%s %s %d' % (printable.decode('utf-8'), modified, size))
-elif sys.argv[2] == 'prune':
+elif len(sys.argv) == 3 and sys.argv[2] == 'prune':
     with sqlite3.connect(sys.argv[1]) as connection:
         cursor = connection.cursor()
         result = cursor.execute('SELECT path, printable_path FROM hashed')
