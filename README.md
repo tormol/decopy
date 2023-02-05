@@ -1,17 +1,19 @@
-# A Program to Find copies of files
+# Decopy - a program to find identical files
 
 ## WIP
 
-The scanning / reading part works, but using it has barely been started on.
+The scanning / reading part works, but using the data has barely been started on.
 
 ## Goals
 
-* Continue after IO errors. (One disk I want to use this on is failing)
+* Skip files with IO errors instead of aborting the program.
 * Write file information from scanning to a sqlite database.
+  (One disk I want to use this on is failing, so I want to minimize usages of it.)
 * Use python scripts to analyze that data and decide what to do.
 
 ## Features implemented so far
 
+* Writes file information from scanning to a sqlite database.
 * Uses different threads for reading and hashing, to keep the disk busy.
 * Number of threads for reading and hashing can be set independently.
   Note that hasher threads will stick to one file until it has been completely read and hashed.
