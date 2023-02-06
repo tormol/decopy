@@ -1,4 +1,6 @@
 #![cfg(unix)]
+#![allow(clippy::uninlined_format_args)] // I don't like mixing code into strings
+
 use std::{env, fs, slice};
 use std::ffi::OsStr;
 use std::io::ErrorKind::*;
@@ -24,7 +26,7 @@ fn main() {
         let c = c as u8;
         let slice: &[u8] = slice::from_ref(&c);
         let p = Path::new(OsStr::from_bytes(slice));
-        if let Err(e) = fs::write(p, &[]) {
+        if let Err(e) = fs::write(p, []) {
             eprintln!("Cannot create {:?}: {}", p, e);
         }
     }

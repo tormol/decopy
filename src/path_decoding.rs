@@ -189,7 +189,7 @@ pub fn display_path(printable: &str,  buf: &mut String,  terminal_width: usize) 
                 } else {
                     let abbreviate_now = min(chars-5, to_abbreviate);
                     let show = (chars - abbreviate_now) as usize - 2;
-                    let show_bytes = match component.char_indices().nth(show as usize) {
+                    let show_bytes = match component.char_indices().nth(show) {
                         Some((pos, _)) => pos,
                         None => component.len(), // should not happen
                     };
@@ -256,7 +256,7 @@ pub struct PrintablePath {
 impl PrintablePath {
     /// Get the lossisly converted printable version of the path.
     pub fn as_str(&self) -> &str {
-        &&self.printable
+        &self.printable
     }
 
     /// Get the original path as bytes.

@@ -13,6 +13,13 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+#![allow(
+    clippy::uninlined_format_args, // I don't like mixing code into strings
+    clippy::needless_return, // `foo` after `foo.frob();` looks like unfinished
+    clippy::match_ref_pats, // keep it explicit
+    clippy::len_zero, clippy::comparison_to_empty, // ! is easy to miss
+)]
+
 extern crate arc_swap;
 extern crate clap;
 extern crate fxhash;
@@ -65,7 +72,7 @@ impl FromStr for Rate {
                 Ok(millis) => Ok(Rate(Duration::from_millis(millis.into()))),
                 Err(e) => Err(e.to_string()),
             }
-        } else if let Some(decimal) = s.strip_suffix("s") {
+        } else if let Some(decimal) = s.strip_suffix('s') {
             match f32::from_str(decimal.trim_end()) {
                 Ok(secs) if !secs.is_finite() => Err("duration must be finite".to_string()),
                 Ok(secs) if secs <= 0.0 => Err("duration must be positive".to_string()),
@@ -128,8 +135,8 @@ fn main() {
     let (complete_tx, complete_rx) = mpsc::channel::<HashedFile>();
     let mut shared = Shared::new(buffers, complete_tx);
     let mut storage = match args.database {
-        Some(ref path) => Sqlite::open(&path, complete_rx, log_channel),
-        None => Sqlite::new_in_memory(complete_rx, log_channel.clone()),
+        Some(ref path) => Sqlite::open(path, complete_rx, log_channel),
+        None => Sqlite::new_in_memory(complete_rx, log_channel),
     };
 
     // check root directories and add them to queue

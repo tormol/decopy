@@ -76,7 +76,7 @@ impl AvailableBuffers {
             map: Mutex::new(BTreeMap::new()),
             starving: Condvar::new(),
             current_buffers_size: AtomicUsize::new(0),
-            max_buffers_size: max_buffers_size.into(),
+            max_buffers_size,
             max_single_buffer: max_single_buffer_size as u32,
         })
     }
@@ -93,7 +93,7 @@ impl AvailableBuffers {
                     buffer.capacity(),
             ));
             let too_much = buffer.capacity() - requested_size;
-            buffer.truncate(requested_size as usize);
+            buffer.truncate(requested_size);
             buffer.shrink_to_fit();
             self.current_buffers_size.fetch_sub(too_much, Ordering::SeqCst);
         }

@@ -62,19 +62,19 @@ const fn to_nonzero(n: u8) -> NonZeroU8 {
 
 const fn try_from_parts(year: i16,  month: u8,  day: u8,  hour: u8,  minute: u8,  second: u8)
  -> Result<PrintableTime, &'static str> {
-    if month < 1 || month > 12 {
+    if month < 1  ||  month > 12 {
         return Err("month is outside the range 1..=12");
-    } else if day < 1 || day > days_in_months(year as i64)[month as usize-1] as u8 {
+    } else if day < 1  ||  day > days_in_months(year as i64)[month as usize-1] {
         return Err("day is outside the range for the given month and year");
     } else if hour > 23 {
         return Err("hour is outside the range 0..=23");
-    } else if minute > 59 || second > 59 {
+    } else if minute > 59  ||  second > 59 {
         return Err("minute or second is outside the range 0..=59");
     } else {
         Ok(PrintableTime {
             year,
-            month: to_nonzero(month as u8),
-            day: to_nonzero(day as u8),
+            month: to_nonzero(month),
+            day: to_nonzero(day),
             hour,
             minute,
             second,
@@ -234,7 +234,7 @@ impl From<SystemTime> for PrintableTime {
 impl FromStr for PrintableTime {
     type Err = &'static str;
     fn from_str(s: &str) -> Result<PrintableTime, Self::Err> {
-        const FORMAT_ERR: &'static str = "must be on the form yyyy-mm-dd HH:MM:SS";
+        const FORMAT_ERR: &str = "must be on the form yyyy-mm-dd HH:MM:SS";
         if s.len() < 16  ||  !s.is_ascii() {
             return Err(FORMAT_ERR);
         }

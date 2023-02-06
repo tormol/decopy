@@ -101,8 +101,8 @@ impl ThreadInfo {
 
     pub fn view_working_on<R, F: FnOnce(Option<&PrintablePath>)->R>(&self,  view: F) -> R{
         match self.working_on.load().deref() {
-            &Some(ref path) => view(Some(path)),
-            &None => view(None),
+            Some(ref path) => view(Some(path)),
+            None => view(None),
         }
     }
     pub fn set_working_on(&self,  path: Option<Arc<PrintablePath>>) {

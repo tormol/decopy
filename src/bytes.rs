@@ -129,7 +129,7 @@ impl Bytes {
         WithSymbol {
             whole: whole as u16,
             fraction: msf as u8 + b'0',
-            symbol: symbol,
+            symbol,
         }
     }
 }

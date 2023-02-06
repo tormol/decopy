@@ -39,15 +39,11 @@ pub enum ToRead {
     Directory(Arc<PrintablePath>),
 }
 
+#[derive(Default)]
 pub struct ReadQueue {
     pub queue: Vec<ToRead>,
     pub stop_now: bool,
     pub working: u32,
-}
-impl Default for ReadQueue {
-    fn default() -> Self {
-        ReadQueue { queue: Vec::new(), stop_now: false, working: 0, }
-    }
 }
 impl Debug for ReadQueue {
     fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
@@ -66,15 +62,11 @@ pub enum FilePart {
     Error(io::Error),
 }
 
+#[derive(Default)]
 pub struct HashQueue {
     pub queue: Vec<(UnreadFile, mpsc::Receiver<FilePart>)>,
     pub stop_now: bool,
     pub stop_when_empty: bool,
-}
-impl Default for HashQueue {
-    fn default() -> Self {
-        HashQueue { queue: Vec::new(), stop_now: false, stop_when_empty: false, }
-    }
 }
 impl Debug for HashQueue {
     fn fmt(&self,  fmtr: &mut Formatter) -> fmt::Result {
