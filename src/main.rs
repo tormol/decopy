@@ -17,6 +17,7 @@
     clippy::uninlined_format_args, // I don't like mixing code into strings
     clippy::needless_return, // `foo` after `foo.frob();` looks like unfinished
     clippy::match_ref_pats, // keep it explicit
+    clippy::redundant_pattern_matching, // keep it explicit, and possibly faster
     clippy::len_zero, clippy::comparison_to_empty, // ! is easy to miss
 )]
 
@@ -32,11 +33,15 @@ extern crate sha2;
 extern crate term_size;
 extern crate thread_priority;
 
+// parts that could be stand-alone libraries
+mod bytes;
+mod multimap;
 mod path_decoding;
 mod time;
+
+// parts that are more specific to this program
 mod thread_info;
 mod available_buffers;
-mod bytes;
 mod shared;
 mod read;
 mod hash;

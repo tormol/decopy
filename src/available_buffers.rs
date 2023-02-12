@@ -13,9 +13,9 @@
  * If not, see <https://www.gnu.org/licenses/>.
  */
 
+use crate::multimap::BTreeMultiMap;
 use crate::thread_info::*;
 
-use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::{Condvar, Mutex, TryLockError};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct AvailableBuffers {
     /// A map used as a multimap:
     /// The second u32 in the key is used as a counter to allow having multiple boxes of the same size.
-    map: Mutex<BTreeMap<(u32, u32), Box<[u8]>>>,
+    map: Mutex<BTreeMultiMap<u32, Box<[u8]>>>,
     starving: Condvar,
     /// Tracks size of buffers given out plus currently in the map.
     current_buffers_size: AtomicUsize,
@@ -43,8 +43,8 @@ impl Debug for AvailableBuffers {
             Ok(map) => {
                 format!("{{{} buffers between {} and {} bytes in size}}",
                         map.len(),
-                        map.first_key_value().unwrap().0.0,
-                        map.last_key_value().unwrap().0.0,
+                        map.first_key_value().unwrap().0,
+                        map.last_key_value().unwrap().0,
                 )
             },
             Err(TryLockError::WouldBlock) => "{locked}".to_string(),
@@ -73,7 +73,7 @@ impl AvailableBuffers {
             return Err("max buffers size is less than max single buffer size")
         }
         Ok(AvailableBuffers {
-            map: Mutex::new(BTreeMap::new()),
+            map: Mutex::new(BTreeMultiMap::default()),
             starving: Condvar::new(),
             current_buffers_size: AtomicUsize::new(0),
             max_buffers_size,
@@ -117,12 +117,12 @@ impl AvailableBuffers {
                 Self::MIN_BUFFER_SIZE.max(self.max_single_buffer as usize/128),
                 self.max_single_buffer as usize,
         );
-        let key = (requested_size as u32, 0);
+        let key = requested_size as u32;
         let mut map = self.map.lock().unwrap();
         loop {
             // see if there is something big enough
             if let Some((&next, _)) = map.range(key..).next() {
-                let buffer = map.remove(&next).unwrap();
+                let buffer = map.remove_last(next).unwrap();
                 if buffer.len() <= requested_size * 2 {
                     return buffer;
                 }
@@ -137,8 +137,8 @@ impl AvailableBuffers {
             }
             // see if there is something slightly too small
             if let Some((&smaller, _)) = map.range(..key).last() {
-                if smaller.0 >= (key.0*9)/10 {
-                    return map.remove(&smaller).unwrap();
+                if smaller >= (key*9)/10 {
+                    return map.remove_last(smaller).unwrap();
                 } 
             }
             // see if there is enough free space
@@ -152,8 +152,8 @@ impl AvailableBuffers {
             }
             // see if there is a buffer that can be grown within the limit.
             let need_to_release = requested_size as isize - unallocated;
-            if let Some((&remove, _)) = map.range((need_to_release as u32, 0)..).next() {
-                let to_grow = map.remove(&remove).unwrap();
+            if let Some((&remove, _)) = map.range(need_to_release as u32..).next() {
+                let to_grow = map.remove_last(remove).unwrap();
                 let increase = requested_size - to_grow.len();
                 self.current_buffers_size.fetch_add(increase, Ordering::Relaxed);
                 drop(map);
@@ -174,33 +174,8 @@ impl AvailableBuffers {
         }
         let size = buffer.len() as u32;
         let mut map = self.map.lock().unwrap();
-        let index = if size == self.max_single_buffer {
-            // use last instead of range when we are at the limit.
-            match map.last_key_value() {
-                Some((&(len, index), _)) if len == size => index+1,
-                Some((&(len, _), _)) if len > size => {
-                    self.current_buffers_size.fetch_sub(buffer.len(), Ordering::Relaxed);
-                    drop(map);
-                    panic!("map has a buffer of size {}, whcih is bigger than the max of {}",
-                            len,
-                            self.max_single_buffer
-                    );
-                },
-                _ => 0,
-            }
-        } else {
-            match map.range(..(size+1, 0)).last() {
-                Some((&(len, index), _)) if len == size => index+1,
-                _ => 0,
-            }
-        };
-        if let Some(buffer) = map.insert((size, index), buffer) {
-            self.current_buffers_size.fetch_sub(buffer.len(), Ordering::Relaxed);
-            drop(map);
-            panic!("There already is a buffer with index ({}, {})", size, index);
-        }
+        map.insert(size, buffer);
         drop(map);
-        // 
         self.starving.notify_all();
     }
 
