@@ -21,7 +21,7 @@ import urllib.parse
 import sqlite3
 
 def usage():
-    print('Usage: %s <database file> scan|show|prune' % sys.argv[0], file=sys.stderr)
+    print('Usage: %s <database file> scan|prune|show|unique' % sys.argv[0], file=sys.stderr)
     sys.exit(1)
 
 def connect_readonly(db_path):
@@ -29,33 +29,28 @@ def connect_readonly(db_path):
     connection = sqlite3.connect('file:%s?mode=ro' % escaped)
     return connection
 
+def query_prefix(path, fields):
+    # Funny, python 3 str is not necessarily UTF-8!
+    # non-UTF8 arguments are handled by storing invalid parts as UTF-16 reserved codepoint.
+    # but they're still instance of str (`isinstance(prefix, str):`)
+    prefix = bytes(path, 'utf-8', 'surrogateescape')
+    # create the "next" string of the same length, or shorter if last byte is max
+    after = bytearray(prefix)
+    for i in range(len(after)-1, -1, -1):
+        if after[i] == 255:
+            after.pop()
+        else:
+            after[i] = after[i]+1
+            break
+    # print('after %s:' % prefix, after)
+    result = connection.execute(
+            'SELECT %s FROM hashed WHERE path >= ? AND path <= ?' % ', '.join(fields),
+            (prefix, after)
+    )
+    return result
+
 if len(sys.argv) > 2 and sys.argv[2] == 'scan':
     os.execvp('cargo', ['cargo', 'run', '--', '-d', sys.argv[1]] + sys.argv[3:])
-elif (len(sys.argv) == 3 or len(sys.argv) == 4) and sys.argv[2] == 'show':
-    # no need to properly close since readonly, I asume
-    connection = connect_readonly(sys.argv[1])
-    if len(sys.argv) == 4:
-        prefix = sys.argv[3]
-        # Funny, python 3 str is not necessarily UTF-8!
-        # non-UTF8 arguments are handled by storing invalid parts as UTF-16 reserved codepoint.
-        # but they're still instance of str (`isinstance(prefix, str):`)`
-        prefix = bytes(prefix, 'utf-8', 'surrogateescape')
-        after = bytearray(prefix)
-        for i in range(len(after)-1, -1, -1):
-            if after[i] == 255:
-                after.pop()
-            else:
-                after[i] = after[i]+1
-                break
-        # print('after %s:' % prefix, after)
-        result = connection.execute(
-                'SELECT printable_path, modified, read_size FROM hashed WHERE path >= ? AND path <= ?',
-                (prefix, after)
-        )
-    else:
-        result = connection.execute('SELECT printable_path, modified, read_size FROM hashed')
-    for printable, modified, size in result.fetchall():
-        print('%s %s %d' % (printable.decode('utf-8'), modified, size))
 elif len(sys.argv) == 3 and sys.argv[2] == 'prune':
     with sqlite3.connect(sys.argv[1]) as connection:
         cursor = connection.cursor()
@@ -70,5 +65,27 @@ elif len(sys.argv) == 3 and sys.argv[2] == 'prune':
         else:
             cursor.executemany('DELETE FROM hashed WHERE path = ?', deleted)
             print('pruned %d files' % cursor.rowcount)
+elif (len(sys.argv) == 3 or len(sys.argv) == 4) and sys.argv[2] == 'show':
+    # no need to properly close since readonly, I asume
+    connection = connect_readonly(sys.argv[1])
+    if len(sys.argv) == 4:
+        result = query_prefix(sys.argv[3], ['path', 'modified', 'read_size'])
+    else:
+        result = connection.execute('SELECT printable_path, modified, read_size FROM hashed')
+    for printable, modified, size in result.fetchall():
+        print('%s %s %d' % (printable.decode('utf-8'), modified, size))
+elif len(sys.argv) == 4 and sys.argv[2] == 'unique':
+    connection = connect_readonly(sys.argv[1])
+    prefix_result = query_prefix(
+            sys.argv[3],
+            ['path', 'printable_path', 'modified', 'read_size', 'hash']
+    )
+    for path, printable, modified, size, hash in prefix_result.fetchall():
+        matched = connection.execute(
+                'SELECT printable_path FROM hashed WHERE hash == ? AND path != ?',
+                (hash, path)
+        ).fetchone()
+        if matched is None:
+            print('%s %s %d %s' % (printable.decode('utf-8'), modified, size, hash.hex()))
 else:
     usage()
