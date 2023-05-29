@@ -69,46 +69,8 @@ impl Sqlite {
     }
 
     fn prepare(&self) {
-        self.connection.execute(
-                "CREATE TABLE IF NOT EXISTS hashed (
-                    path BLOB PRIMARY KEY NOT NULL,
-                    printable_dir TEXT NOT NULL, -- must include trailing separator if not empty
-                    printable_name TEXT NOT NULL,
-                    printable_path TEXT NOT NULL GENERATED ALWAYS
-                        AS (printable_dir || printable_name) VIRTUAL,
-                    modified TEXT NOT NULL CHECK(length(modified)=19),
-                    apparent_size UNSIGNED INTEGER NOT NULL,
-                    read_size UNSIGNED INTEGER NOT NULL,
-                    hash BLOB NOT NULL CHECK(length(hash)=32),
-                    hash_hex TEXT NOT NULL GENERATED ALWAYS
-                        AS (hex(hash)) VIRTUAL
-                ) WITHOUT ROWID", // should be faster as long as path is printable and not too long
-                (), // empty list of parameters
-        ).expect("create hashed table");
-        self.connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS hashed_path ON hashed (path ASC)",
-                (),
-        ).expect("create path index");
-        self.connection.execute(
-                "CREATE INDEX IF NOT EXISTS hashed_dir ON hashed (printable_dir ASC)",
-                (),
-        ).expect("create dir index");
-        self.connection.execute(
-                "CREATE INDEX IF NOT EXISTS hashed_name ON hashed (printable_name)",
-                (),
-        ).expect("create name index");
-        self.connection.execute(
-                "CREATE INDEX IF NOT EXISTS hashed_hash ON hashed (hash)",
-                (),
-        ).expect("create hash index");
-
-        self.connection.execute(
-                "CREATE TABLE IF NOT EXISTS roots (
-                    path BLOB PRIMARY KEY NOT NULL,
-                    printable_path TEXT NOT NULL
-                ) WITHOUT ROWID",
-                (),
-        ).expect("create roots table");
+        let transaction = concat!("BEGIN\n;", include_str!("../schema.sql"), "COMMIT;\n");
+        self.connection.execute_batch(transaction).expect("create schema");
     }
 
     pub fn get_previously_read(&mut self,

@@ -21,7 +21,7 @@ import urllib.parse
 import sqlite3
 
 def usage():
-    print('Usage: %s <database file> scan|prune|show|unique' % sys.argv[0], file=sys.stderr)
+    print('Usage: %s <database file> scan|prune|update|show|unique' % sys.argv[0], file=sys.stderr)
     sys.exit(1)
 
 def connect_readonly(db_path):
@@ -65,6 +65,34 @@ elif len(sys.argv) == 3 and sys.argv[2] == 'prune':
         else:
             cursor.executemany('DELETE FROM hashed WHERE path = ?', deleted)
             print('pruned %d files' % cursor.rowcount)
+elif len(sys.argv) == 3 and sys.argv[2] == 'update':
+    with open('schema.sql') as f:
+        new_schema = f.read(-1)
+    with sqlite3.connect(sys.argv[1]) as connection:
+        connection.executescript(
+                'BEGIN;'
+                + 'ALTER TABLE hashed RENAME TO old_hashed;'
+                + new_schema
+        )
+        query = connection.execute(
+                'SELECT path, printable_path, modified, apparent_size, read_size, hash FROM old_hashed'
+        )
+        while True:
+            insert = []
+            for path, printable, modified, apparent, read, hash in query.fetchmany():
+                name = os.path.basename(printable)
+                dir = printable[:-len(name)]
+                insert.append((path, dir, name, modified, apparent, read, hash))
+            if len(insert) == 0:
+                break;
+            connection.executemany("""
+                    INSERT INTO hashed
+                    (path, printable_dir, printable_name, modified, apparent_size, read_size, hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, insert)
+        connection.execute('DROP TABLE old_hashed');
+        connection.execute('COMMIT')
+        connection.execute('VACUUM')
 elif (len(sys.argv) == 3 or len(sys.argv) == 4) and sys.argv[2] == 'show':
     # no need to properly close since readonly, I asume
     connection = connect_readonly(sys.argv[1])
