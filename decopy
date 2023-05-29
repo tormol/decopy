@@ -73,7 +73,7 @@ elif (len(sys.argv) == 3 or len(sys.argv) == 4) and sys.argv[2] == 'show':
     else:
         result = connection.execute('SELECT printable_path, modified, read_size FROM hashed')
     for printable, modified, size in result.fetchall():
-        print('%s %s %d' % (printable.decode('utf-8'), modified, size))
+        print('%s %s %d' % (printable, modified, size))
 elif len(sys.argv) == 4 and sys.argv[2] == 'unique':
     connection = connect_readonly(sys.argv[1])
     prefix_result = query_prefix(
@@ -86,6 +86,6 @@ elif len(sys.argv) == 4 and sys.argv[2] == 'unique':
                 (hash, path)
         ).fetchone()
         if matched is None:
-            print('%s %s %d %s' % (printable.decode('utf-8'), modified, size, hash.hex()))
+            print('%s %s %d %s' % (printable, modified, size, hash.hex()))
 else:
     usage()

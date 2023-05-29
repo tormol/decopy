@@ -72,9 +72,10 @@ impl Sqlite {
         self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS hashed (
                     path BLOB PRIMARY KEY NOT NULL,
-                    printable_version TEXT,
+                    printable_dir TEXT NOT NULL, -- must include trailing separator if not empty
+                    printable_name TEXT NOT NULL,
                     printable_path TEXT NOT NULL GENERATED ALWAYS
-                        AS (ifnull(printable_version, path)) VIRTUAL,
+                        AS (printable_dir || printable_name) VIRTUAL,
                     modified TEXT NOT NULL CHECK(length(modified)=19),
                     apparent_size UNSIGNED INTEGER NOT NULL,
                     read_size UNSIGNED INTEGER NOT NULL,
@@ -88,6 +89,14 @@ impl Sqlite {
                 "CREATE UNIQUE INDEX IF NOT EXISTS hashed_path ON hashed (path ASC)",
                 (),
         ).expect("create path index");
+        self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS hashed_dir ON hashed (printable_dir ASC)",
+                (),
+        ).expect("create dir index");
+        self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS hashed_name ON hashed (printable_name)",
+                (),
+        ).expect("create name index");
         self.connection.execute(
                 "CREATE INDEX IF NOT EXISTS hashed_hash ON hashed (hash)",
                 (),
@@ -149,9 +158,13 @@ impl Sqlite {
 
     pub fn save_hashed(&mut self,  insert_interval: Duration) {
         fn insert_hashed(statement: &mut Statement,  insert: HashedFile) {
+            let printable_path = insert.path.as_str();
+            let name = Path::new(printable_path).file_name().unwrap_or_default().to_str().unwrap();
+            let dir = &printable_path[..printable_path.len()-name.len()]; // with trailing slash
             statement.insert(params!(
                     insert.path.as_bytes(),
-                    if insert.path.is_printable() {None} else {Some(insert.path.as_str())},
+                    dir,
+                    name,
                     insert.modified.to_string(),
                     insert.apparent_size,
                     insert.read_size,
@@ -162,9 +175,9 @@ impl Sqlite {
             let oldest = Instant::now();
             let mut files = 1u32;
             let transaction = self.connection.transaction().expect("start transaction");
-            let mut statement = transaction.prepare("INSERT OR REPLACE
-                    INTO hashed (path, printable_version, modified, apparent_size, read_size, hash)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            let mut statement = transaction.prepare("INSERT OR REPLACE INTO HASHED
+                    (path, printable_dir, printable_name, modified, apparent_size, read_size, hash)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
             ).expect("create INSERT OR REPLACE statement");
             insert_hashed(&mut statement, file);
             let mut timeout = insert_interval;
